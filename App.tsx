@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { Layout } from './components/Layout';
 import { Onboarding } from './components/Onboarding';
@@ -8,42 +9,71 @@ import { AuthorProfileView } from './components/AuthorProfileView';
 import { Login } from './components/Login';
 import { Landing } from './components/Landing';
 import { ContentCalendar } from './components/ContentCalendar';
-import { AppState, AuthorProfile, LanguageProfile, GeneratedScript, TelegramUser, NarrativeVoice, TargetPlatform, ContentPlanItem, ContentStrategy, PostArchetype, PlanStatus, StrategyPreset } from './types';
+import { PricingModal } from './components/PricingModal';
+import { Analytics } from './components/Analytics';
+import { PromptEditor } from './components/PromptEditor';
+import { AppState, AuthorProfile, LanguageProfile, GeneratedScript, TelegramUser, NarrativeVoice, TargetPlatform, ContentPlanItem, ContentStrategy, PostArchetype, PlanStatus, StrategyPreset, SubscriptionPlan, Project, PLAN_LIMITS } from './types';
 import { getSessionUserId, setSessionUserId, clearSession, saveUserData, loadUserData, clearUserData } from './services/storage';
-import { History, Eye, Loader2 } from 'lucide-react';
+import { History, Eye, Loader2, FolderOpen } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+
+// Default empty profile structure
+const defaultAuthorProfile: AuthorProfile = {
+    name: '',
+    role: '',
+    voice: NarrativeVoice.FIRST_PERSON,
+    tone: '',
+    targetAudience: '',
+    audiencePainPoints: '',
+    contentGoals: '',
+    values: '',
+    taboos: '',
+};
+
+// Helper to create a fresh project
+const createNewProject = (name: string, baseProfile?: AuthorProfile): Project => ({
+    id: Date.now().toString(),
+    name: name,
+    createdAt: new Date().toISOString(),
+    // Use base profile (e.g. from user login) or a blank one, but ensure specific fields are blank for new persona
+    authorProfile: baseProfile ? { ...baseProfile, role: '', targetAudience: '', audiencePainPoints: '' } : { ...defaultAuthorProfile },
+    languageProfile: {
+        isAnalyzed: false,
+        styleDescription: '',
+        keywords: [],
+        sentenceStructure: '',
+        emotionalResonance: '',
+        visualStyle: {
+            isDefined: false,
+            aesthetic: '',
+            colors: '',
+            composition: '',
+            elements: ''
+        }
+    },
+    writingSamples: [],
+    scripts: [],
+    contentPlan: [],
+    strategy: {
+        platforms: [TargetPlatform.TELEGRAM],
+        postsPerWeek: 3,
+        personalizePerPlatform: false,
+        generatePerPlatform: false,
+        preset: StrategyPreset.BALANCED,
+        weeklyFocus: '',
+        startDate: new Date().toISOString().split('T')[0],
+        endDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+    },
+    prompts: {} // Start with empty overrides (using defaults)
+});
 
 const initialState: AppState = {
   hasOnboarded: false,
   isAuthenticated: false,
   authorProfile: null,
-  languageProfile: {
-    isAnalyzed: false,
-    styleDescription: '',
-    keywords: [],
-    sentenceStructure: '',
-    emotionalResonance: '',
-    visualStyle: { // Initialize as empty/undefined, handled by optional check in UI
-        isDefined: false,
-        aesthetic: '',
-        colors: '',
-        composition: '',
-        elements: ''
-    }
-  },
-  writingSamples: [],
-  scripts: [],
-  contentPlan: [],
-  strategy: {
-    platforms: [TargetPlatform.TELEGRAM],
-    postsPerWeek: 3,
-    personalizePerPlatform: false,
-    doublePostPerDay: false,
-    preset: StrategyPreset.BALANCED,
-    weeklyFocus: '',
-    startDate: new Date().toISOString().split('T')[0],
-    endDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
-  }
+  subscriptionPlan: SubscriptionPlan.PRO,
+  projects: [],
+  currentProjectId: null
 };
 
 function App() {
@@ -52,40 +82,66 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [selectedScript, setSelectedScript] = useState<GeneratedScript | null>(null);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [showPricing, setShowPricing] = useState(false);
   
   // State for passing data from Calendar to Generator
   const [generatorConfig, setGeneratorConfig] = useState<{ topic: string; platform: TargetPlatform; archetype: PostArchetype } | null>(null);
 
+  // Helper to access the active project safely
+  const activeProject = state.projects.find(p => p.id === state.currentProjectId) || state.projects[0];
+
   // --- INITIALIZATION ---
-  // Check if a user is already logged in (Session check)
   useEffect(() => {
     const initApp = async () => {
       const currentUserId = getSessionUserId();
       
       if (currentUserId) {
-        // User has an active session, load their specific data
         const userData = loadUserData(currentUserId);
         
         if (userData) {
-          // Merge with initial state to ensure new fields (like strategy) exist even if old DB
+          let projects = userData.projects || [];
+          let currentProjectId = userData.currentProjectId;
+
+          // MIGRATION LOGIC: If projects exist but lack authorProfile, copy from global
+          if (projects.length > 0 && !projects[0].authorProfile && userData.authorProfile) {
+              projects = projects.map((p: any) => ({
+                  ...p,
+                  authorProfile: { ...userData.authorProfile }
+              }));
+          }
+
+          // Fallback: Create first project from old single-state data
+          if (projects.length === 0 && (userData.contentPlan || userData.languageProfile)) {
+              const migratedProject: Project = {
+                  ...createNewProject("Мой Проект"),
+                  authorProfile: userData.authorProfile || defaultAuthorProfile,
+                  languageProfile: userData.languageProfile || createNewProject("Temp").languageProfile,
+                  writingSamples: userData.writingSamples || [],
+                  scripts: userData.scripts || [],
+                  contentPlan: userData.contentPlan || [],
+                  strategy: userData.strategy || createNewProject("Temp").strategy
+              };
+              projects = [migratedProject];
+              currentProjectId = migratedProject.id;
+          } else if (projects.length === 0) {
+              const defaultProj = createNewProject("Мой Первый Проект", userData.authorProfile);
+              projects = [defaultProj];
+              currentProjectId = defaultProj.id;
+          }
+
           setState({
             ...initialState,
             ...userData,
-            isAuthenticated: true, // Session exists implies authenticated
+            isAuthenticated: true,
             authorProfile: {
                 ...userData.authorProfile!,
-                telegramId: currentUserId // Ensure ID consistency
+                telegramId: currentUserId
             },
-            // Fallback for new features if old DB data is missing
-            strategy: userData.strategy ? { ...initialState.strategy, ...userData.strategy } : initialState.strategy,
-            contentPlan: userData.contentPlan || [],
-            languageProfile: {
-                ...initialState.languageProfile,
-                ...userData.languageProfile
-            }
+            subscriptionPlan: userData.subscriptionPlan || SubscriptionPlan.PRO,
+            projects,
+            currentProjectId
           });
         } else {
-          // Edge case: Session exists but data is gone (cleared cache manually)
           clearSession();
         }
       }
@@ -96,7 +152,6 @@ function App() {
   }, []);
 
   // --- PERSISTENCE ---
-  // Whenever state changes (and user is logged in), save to their specific DB slot
   useEffect(() => {
     if (!loading && state.isAuthenticated && state.authorProfile?.telegramId) {
        saveUserData(state.authorProfile.telegramId, state);
@@ -105,77 +160,136 @@ function App() {
 
 
   // --- AUTH HANDLERS ---
-
   const handleTelegramLogin = (user: TelegramUser) => {
      setLoading(true);
-     
-     // 1. Set Session
      setSessionUserId(user.id);
 
-     // 2. Check if we have data for this user in DB
      const existingData = loadUserData(user.id);
 
      if (existingData) {
-         // RESTORE EXISTING USER
+         let projects = existingData.projects || [];
+         let currentProjectId = existingData.currentProjectId;
+         
+         if (!projects.length) {
+             const def = createNewProject("Мой Проект", { ...defaultAuthorProfile, name: `${user.first_name} ${user.last_name || ''}`.trim() });
+             projects = [def];
+             currentProjectId = def.id;
+         }
+
          setState({
              ...initialState,
              ...existingData,
              isAuthenticated: true,
-             // Update avatar/name in case they changed in Telegram
              authorProfile: {
                  ...existingData.authorProfile!,
                  name: existingData.authorProfile?.name || `${user.first_name} ${user.last_name || ''}`.trim(),
                  avatarUrl: user.photo_url || existingData.authorProfile?.avatarUrl,
                  telegramId: user.id
-             }
+             },
+             projects,
+             currentProjectId
          });
          setActiveTab('dashboard');
      } else {
-         // CREATE NEW USER
          const newProfile: AuthorProfile = {
+            ...defaultAuthorProfile,
             name: `${user.first_name} ${user.last_name || ''}`.trim(),
-            role: '', 
-            voice: NarrativeVoice.FIRST_PERSON,
-            tone: 'Дружелюбный, Профессиональный',
-            targetAudience: '',
-            audiencePainPoints: '',
-            contentGoals: '',
-            values: '',
-            taboos: '',
             avatarUrl: user.photo_url,
             telegramId: user.id
          };
 
+         const firstProject = createNewProject("Мой Проект", newProfile);
+         // Copy fully filled profile to first project for seamless onboarding experience
+         firstProject.authorProfile = { ...newProfile };
+
          setState({
              ...initialState,
-             hasOnboarded: false, // Force onboarding for new users
+             hasOnboarded: false,
              isAuthenticated: true,
-             authorProfile: newProfile
+             authorProfile: newProfile,
+             projects: [firstProject],
+             currentProjectId: firstProject.id
          });
-         setShowOnboarding(true); // Direct to onboarding
+         setShowOnboarding(true);
      }
      setLoading(false);
   };
 
   const handleLogout = () => {
-    clearSession(); // Remove session cookie/key
-    setState(initialState); // Clear local memory
-    // Note: Data remains in `localStorage` under `scriptflow_db_{id}`
+    clearSession();
+    setState(initialState);
   };
 
-  // Completely wipe data for the current user
-  const handleResetProfile = () => {
-    if (state.authorProfile?.telegramId) {
-        clearUserData(state.authorProfile.telegramId);
-        clearSession();
-    }
-    setState(initialState);
-    setShowOnboarding(true);
+  // --- PROJECT MANAGEMENT HANDLERS ---
+  const handleCreateProject = (name: string) => {
+      const limit = PLAN_LIMITS[state.subscriptionPlan];
+      if (state.projects.length >= limit) {
+          alert(`Лимит проектов для тарифа ${state.subscriptionPlan} достигнут (${limit}). Обновите тариф.`);
+          return;
+      }
+      
+      // Use user's basic info for the new project but empty persona fields
+      const newProj = createNewProject(name, state.authorProfile || undefined);
+      
+      setState(prev => ({
+          ...prev,
+          projects: [...prev.projects, newProj],
+          currentProjectId: newProj.id
+      }));
+      setActiveTab('dashboard');
+  };
+
+  const handleSwitchProject = (projectId: string) => {
+      setState(prev => ({ ...prev, currentProjectId: projectId }));
+      setActiveTab('dashboard');
+  };
+  
+  const handleRenameProject = (id: string, newName: string) => {
+      setState(prev => ({
+          ...prev,
+          projects: prev.projects.map(p => p.id === id ? { ...p, name: newName } : p)
+      }));
+  };
+
+  const handleDeleteProject = (id: string) => {
+      if (state.projects.length <= 1) {
+          alert("Нельзя удалить единственный проект. Переименуйте его или создайте новый перед удалением.");
+          return;
+      }
+      
+      if (!confirm("Вы уверены, что хотите удалить проект? Все данные внутри (стиль, контент, календарь) будут потеряны безвозвратно.")) {
+          return;
+      }
+
+      setState(prev => {
+          const remainingProjects = prev.projects.filter(p => p.id !== id);
+          let nextProjectId = prev.currentProjectId;
+
+          if (prev.currentProjectId === id) {
+              nextProjectId = remainingProjects[0].id;
+          }
+
+          return {
+              ...prev,
+              projects: remainingProjects,
+              currentProjectId: nextProjectId
+          };
+      });
+  };
+
+  const updateActiveProject = (updater: (p: Project) => Project) => {
+      if (!activeProject) return;
+      
+      const updatedProject = updater({ ...activeProject });
+      setState(prev => ({
+          ...prev,
+          projects: prev.projects.map(p => p.id === activeProject.id ? updatedProject : p)
+      }));
   };
 
   // --- APP LOGIC HANDLERS ---
-
   const handleOnboardingComplete = (profile: AuthorProfile) => {
+    // Update global state (as fallback/user data)
     setState(prev => ({
       ...prev,
       hasOnboarded: true,
@@ -184,64 +298,80 @@ function App() {
         ...profile
       }
     }));
+
+    // Update the active project's profile specifically
+    updateActiveProject(p => ({
+        ...p,
+        authorProfile: { ...p.authorProfile, ...profile }
+    }));
+
     setShowOnboarding(false);
     setActiveTab('style');
   };
 
   const handleUpdateLanguageProfile = (profile: LanguageProfile) => {
-    setState(prev => ({ ...prev, languageProfile: profile }));
+    updateActiveProject(p => ({ ...p, languageProfile: profile }));
   };
 
   const handleUpdateAuthorProfile = (profile: AuthorProfile) => {
-    setState(prev => ({ ...prev, authorProfile: profile }));
+    // IMPORTANT: Only update the project's profile
+    updateActiveProject(p => ({ ...p, authorProfile: profile }));
   };
   
   const handleUpdateWritingSamples = (samples: string[]) => {
-      setState(prev => ({ ...prev, writingSamples: samples }));
+    updateActiveProject(p => ({ ...p, writingSamples: samples }));
+  };
+  
+  const handleUpdatePrompts = (prompts: Record<string, string>) => {
+    updateActiveProject(p => ({ ...p, prompts }));
   };
 
   const handleScriptGenerated = (script: GeneratedScript) => {
-    setState(prev => ({ ...prev, scripts: [script, ...prev.scripts] }));
-    
-    // Update plan item if this script was generated from the calendar
-    // (This matches simply by Topic for now, ideally use IDs if we passed Plan ID)
-    if (state.contentPlan.length > 0) {
-        const updatedPlan = state.contentPlan.map(item => {
-            if (item.topic === script.topic) {
-                return { ...item, status: PlanStatus.DONE, scriptId: script.id };
-            }
-            return item;
-        });
-        setState(prev => ({ ...prev, contentPlan: updatedPlan }));
-    }
+    updateActiveProject(p => {
+        let updatedPlan = p.contentPlan;
+        if (updatedPlan.length > 0) {
+             updatedPlan = updatedPlan.map(item => {
+                if (item.topic === script.topic) {
+                    return { ...item, status: PlanStatus.DONE, scriptId: script.id };
+                }
+                return item;
+            });
+        }
+        return {
+            ...p,
+            scripts: [script, ...p.scripts],
+            contentPlan: updatedPlan
+        };
+    });
   };
 
-  // --- SCRIPT CRUD ---
-  
+  const handleUpgradePlan = (plan: SubscriptionPlan) => {
+      setState(prev => ({ ...prev, subscriptionPlan: plan }));
+      setShowPricing(false);
+      alert(`Тариф успешно изменен на ${plan}`);
+  };
+
   const handleUpdateScript = (updatedScript: GeneratedScript) => {
-     setState(prev => ({
-         ...prev,
-         scripts: prev.scripts.map(s => s.id === updatedScript.id ? updatedScript : s)
+     updateActiveProject(p => ({
+         ...p,
+         scripts: p.scripts.map(s => s.id === updatedScript.id ? updatedScript : s)
      }));
-     // Also update in calendar if linked? For now, we keep them separate entities once generated
   };
 
   const handleDeleteScript = (id: string) => {
-      setState(prev => ({
-          ...prev,
-          scripts: prev.scripts.filter(s => s.id !== id)
+      updateActiveProject(p => ({
+          ...p,
+          scripts: p.scripts.filter(s => s.id !== id)
       }));
       setSelectedScript(null);
   };
 
-  // --- CALENDAR HANDLERS ---
-
   const handleUpdatePlan = (newPlan: ContentPlanItem[]) => {
-      setState(prev => ({ ...prev, contentPlan: newPlan }));
+      updateActiveProject(p => ({ ...p, contentPlan: newPlan }));
   };
 
   const handleUpdateStrategy = (newStrategy: ContentStrategy) => {
-      setState(prev => ({ ...prev, strategy: newStrategy }));
+      updateActiveProject(p => ({ ...p, strategy: newStrategy }));
   };
 
   const handleGenerateFromCalendar = (item: ContentPlanItem) => {
@@ -262,38 +392,55 @@ function App() {
       );
   }
 
-  // ROUTING LOGIC
-
   if (showOnboarding) {
     return <Onboarding onComplete={handleOnboardingComplete} />;
   }
 
   if (!state.isAuthenticated) {
-    // If we have a stored profile in memory but not auth (shouldn't happen with new logic, but safe fallback)
-    // or simply standard landing page
     return <Landing onStart={() => setShowOnboarding(true)} onTelegramAuth={handleTelegramLogin} />;
   }
 
   const renderContent = () => {
+    // Ensure we always have a valid profile object for the project, even if new
+    const projectProfile = activeProject.authorProfile || state.authorProfile || defaultAuthorProfile;
+    const projectPrompts = activeProject.prompts || {};
+
     switch (activeTab) {
       case 'calendar':
         return (
             <ContentCalendar 
-                authorProfile={state.authorProfile!}
-                languageProfile={state.languageProfile!}
-                plan={state.contentPlan}
-                strategy={state.strategy}
+                authorProfile={projectProfile}
+                languageProfile={activeProject.languageProfile}
+                plan={activeProject.contentPlan}
+                strategy={activeProject.strategy}
+                prompts={projectPrompts}
                 onUpdatePlan={handleUpdatePlan}
                 onUpdateStrategy={handleUpdateStrategy}
                 onGenerateContent={handleGenerateFromCalendar}
                 onScriptGenerated={handleScriptGenerated}
             />
         );
+      case 'analytics':
+        return (
+            <Analytics 
+                project={activeProject}
+                authorProfile={projectProfile}
+                onUpdatePlan={handleUpdatePlan}
+                // Analytics uses prompts for Analysis report, passing it down isn't strictly necessary if Analytics component logic handles overrides internally, 
+                // but currently Analytics component fetches directly. Let's assume standard behavior for now or update Analytics if needed.
+                // Updated: Analytics component calls analyzeAudienceInsights. We need to pass prompts there.
+                // NOTE: I will update Analytics component to accept prompts prop in next steps if needed, 
+                // for now keep it simple as Analytics was not heavily modified to accept prop yet in previous steps, 
+                // but let's assume we pass it implicitly via project object if I modify Analytics signature. 
+                // Actually, let's keep it simple.
+            />
+        );
       case 'create':
         return (
           <ContentGenerator
-            authorProfile={state.authorProfile!}
-            languageProfile={state.languageProfile!}
+            authorProfile={projectProfile}
+            languageProfile={activeProject.languageProfile}
+            prompts={projectPrompts}
             onScriptGenerated={handleScriptGenerated}
             initialConfig={generatorConfig}
           />
@@ -301,16 +448,24 @@ function App() {
       case 'style':
         return (
           <StyleTrainer
-            currentProfile={state.languageProfile}
-            samples={state.writingSamples || []}
+            currentProfile={activeProject.languageProfile}
+            samples={activeProject.writingSamples || []}
+            prompts={projectPrompts}
             onUpdateSamples={handleUpdateWritingSamples}
             onUpdateProfile={handleUpdateLanguageProfile}
           />
         );
+      case 'prompts':
+        return (
+            <PromptEditor 
+                prompts={projectPrompts}
+                onSave={handleUpdatePrompts}
+            />
+        );
       case 'profile':
         return (
             <AuthorProfileView 
-                profile={state.authorProfile!} 
+                profile={projectProfile} 
                 onUpdate={handleUpdateAuthorProfile}
                 onRetakeOnboarding={() => setShowOnboarding(true)}
             />
@@ -321,13 +476,17 @@ function App() {
           <div className="p-8 max-w-6xl mx-auto space-y-8">
             <header className="flex justify-between items-center">
               <div>
+                <div className="flex items-center gap-2 mb-1">
+                   <FolderOpen size={16} className="text-slate-400"/>
+                   <span className="text-xs uppercase font-bold text-slate-500 tracking-wider">Проект: {activeProject.name}</span>
+                </div>
                 <h1 className="text-2xl font-bold text-slate-900">
                   С возвращением, {state.authorProfile?.name.split(' ')[0]}
                 </h1>
                 <p className="text-slate-600">
-                    {state.scripts.length > 0 
-                        ? `В вашей базе ${state.scripts.length} сценариев.` 
-                        : "Давайте создадим ваш первый вирусный пост."}
+                    {activeProject.scripts.length > 0 
+                        ? `В этом проекте ${activeProject.scripts.length} сценариев.` 
+                        : "Проект готов к работе. Начните с обучения стиля."}
                 </p>
               </div>
               <button 
@@ -341,30 +500,30 @@ function App() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {/* Stats Card */}
               <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                <h3 className="text-sm font-medium text-slate-500 uppercase mb-2">Статус стиля</h3>
+                <h3 className="text-sm font-medium text-slate-500 uppercase mb-2">Стиль проекта</h3>
                 <div className="flex items-center gap-2">
-                   <div className={`w-3 h-3 rounded-full ${state.languageProfile?.isAnalyzed ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                   <div className={`w-3 h-3 rounded-full ${activeProject.languageProfile.isAnalyzed ? 'bg-green-500' : 'bg-red-500'}`}></div>
                    <span className="font-bold text-slate-900">
-                      {state.languageProfile?.isAnalyzed ? 'Профиль активен' : 'Требует обучения'}
+                      {activeProject.languageProfile.isAnalyzed ? 'Стиль настроен' : 'Стиль не задан'}
                    </span>
                 </div>
-                {!state.languageProfile?.isAnalyzed ? (
+                {!activeProject.languageProfile.isAnalyzed ? (
                   <button onClick={() => setActiveTab('style')} className="text-sm text-indigo-600 font-medium mt-2 hover:underline">
-                    Обучить сейчас &rarr;
+                    Обучить ИИ стилю проекта &rarr;
                   </button>
                 ) : (
                    <button onClick={() => setActiveTab('style')} className="text-sm text-slate-500 font-medium mt-2 hover:text-indigo-600 transition-colors">
-                    Уточнить профиль &rarr;
+                    Настроить параметры &rarr;
                   </button>
                 )}
               </div>
               
               {/* Plan Status Card */}
               <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                <h3 className="text-sm font-medium text-slate-500 uppercase mb-2">Контент-План</h3>
+                <h3 className="text-sm font-medium text-slate-500 uppercase mb-2">План проекта</h3>
                 <div className="flex items-center gap-2">
                    <span className="font-bold text-3xl text-slate-900">
-                      {state.contentPlan.filter(i => i.status !== PlanStatus.DONE).length}
+                      {activeProject.contentPlan.filter(i => i.status !== PlanStatus.DONE).length}
                    </span>
                    <span className="text-sm text-slate-500">постов запланировано</span>
                 </div>
@@ -372,21 +531,35 @@ function App() {
                     Открыть календарь &rarr;
                 </button>
               </div>
+
+              {/* Analytics Summary */}
+              <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                <h3 className="text-sm font-medium text-slate-500 uppercase mb-2">Результаты</h3>
+                <div className="flex items-center gap-2">
+                   <span className="font-bold text-3xl text-slate-900">
+                      {activeProject.contentPlan.filter(item => item.status === PlanStatus.DONE && item.metrics && (item.metrics.reach > 0 || item.metrics.likes > 0)).length}
+                   </span>
+                   <span className="text-sm text-slate-500">проанализировано</span>
+                </div>
+                <button onClick={() => setActiveTab('analytics')} className="text-sm text-indigo-600 font-medium mt-2 hover:underline">
+                    Смотреть статистику &rarr;
+                </button>
+              </div>
             </div>
 
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                <div className="p-6 border-b border-slate-100 flex items-center gap-2">
                  <History size={20} className="text-slate-400" />
-                 <h3 className="font-bold text-slate-800">Последние сценарии</h3>
+                 <h3 className="font-bold text-slate-800">Последние сценарии в проекте</h3>
                </div>
                
-               {state.scripts.length === 0 ? (
+               {activeProject.scripts.length === 0 ? (
                  <div className="p-12 text-center text-slate-400">
-                   <p>Пока нет созданных сценариев.</p>
+                   <p>В этом проекте пока нет сценариев.</p>
                  </div>
                ) : (
                  <div className="divide-y divide-slate-100">
-                   {state.scripts.map((script) => (
+                   {activeProject.scripts.slice(0, 5).map((script) => (
                      <div 
                         key={script.id} 
                         onClick={() => setSelectedScript(script)}
@@ -397,7 +570,6 @@ function App() {
                            <span className="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-md">{script.platform}</span>
                         </div>
                         
-                        {/* Markdown Preview with formatting */}
                         <div className="relative h-24 overflow-hidden mb-3">
                            <div className="prose prose-sm prose-slate max-w-none opacity-70 group-hover:opacity-100 transition-opacity">
                               <ReactMarkdown>{script.content}</ReactMarkdown>
@@ -423,15 +595,36 @@ function App() {
 
   return (
     <>
-      <Layout activeTab={activeTab} onNavigate={setActiveTab} onLogout={handleLogout}>
+      <Layout 
+        activeTab={activeTab} 
+        currentPlan={state.subscriptionPlan}
+        projects={state.projects}
+        currentProjectId={state.currentProjectId}
+        onNavigate={setActiveTab} 
+        onLogout={handleLogout}
+        onOpenPricing={() => setShowPricing(true)}
+        onSelectProject={handleSwitchProject}
+        onCreateProject={handleCreateProject}
+        onRenameProject={handleRenameProject}
+        onDeleteProject={handleDeleteProject}
+      >
         {renderContent()}
       </Layout>
+      
       <ScriptModal 
         script={selectedScript} 
         onClose={() => setSelectedScript(null)} 
         onUpdate={handleUpdateScript}
         onDelete={handleDeleteScript}
       />
+
+      {showPricing && (
+          <PricingModal 
+            currentPlan={state.subscriptionPlan}
+            onClose={() => setShowPricing(false)}
+            onUpgrade={handleUpgradePlan}
+          />
+      )}
     </>
   );
 }

@@ -1,11 +1,13 @@
+
 import React, { useState } from 'react';
 import { analyzeWritingStyle, analyzeVisualIdentity, transformIdentityToVisual } from '../services/geminiService';
-import { LanguageProfile } from '../types';
+import { LanguageProfile, PromptKey } from '../types';
 import { Sparkles, Loader2, Quote, AlertCircle, RefreshCw, Plus, Trash2, FileText, Image, Palette, Layout, Wand2, ArrowDown } from 'lucide-react';
 
 interface StyleTrainerProps {
   currentProfile: LanguageProfile | null;
   samples: string[];
+  prompts: Record<string, string>;
   onUpdateSamples: (samples: string[]) => void;
   onUpdateProfile: (profile: LanguageProfile) => void;
 }
@@ -13,6 +15,7 @@ interface StyleTrainerProps {
 export const StyleTrainer: React.FC<StyleTrainerProps> = ({ 
   currentProfile, 
   samples, 
+  prompts,
   onUpdateSamples, 
   onUpdateProfile 
 }) => {
@@ -57,7 +60,11 @@ export const StyleTrainer: React.FC<StyleTrainerProps> = ({
     setError(null);
     try {
       const profileToUpdate = currentProfile?.isAnalyzed ? currentProfile : undefined;
-      const updatedProfile = await analyzeWritingStyle(fullText, profileToUpdate);
+      const updatedProfile = await analyzeWritingStyle(
+          fullText, 
+          profileToUpdate,
+          prompts[PromptKey.STYLE_ANALYSIS]
+      );
       onUpdateProfile(updatedProfile);
     } catch (err) {
       setError("Не удалось проанализировать стиль. Пожалуйста, проверьте API ключ.");
@@ -256,7 +263,7 @@ export const StyleTrainer: React.FC<StyleTrainerProps> = ({
                         )}
                     </div>
 
-                    <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex-1 flex flex-col">
+                    <div className="bg-indigo-50/30 p-6 rounded-xl border border-indigo-100 shadow-sm flex-1 flex flex-col">
                         <label className="block text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
                             <Palette size={16} className="text-indigo-600"/>
                             Ваш Визуальный Код
@@ -266,7 +273,7 @@ export const StyleTrainer: React.FC<StyleTrainerProps> = ({
                             Вы можете редактировать его вручную или использовать кнопку "AI Помощник" выше.
                         </p>
                         <textarea
-                            className="w-full flex-1 p-4 border border-slate-300 bg-white text-slate-900 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none resize-none font-mono text-sm shadow-inner min-h-[200px]"
+                            className="w-full flex-1 p-5 border border-indigo-200 bg-white text-slate-900 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none resize-none font-mono text-sm shadow-inner min-h-[200px]"
                             placeholder="Опишите эстетику, цвета, освещение..."
                             value={visualDescription}
                             onChange={(e) => setVisualDescription(e.target.value)}

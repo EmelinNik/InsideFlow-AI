@@ -1,4 +1,5 @@
-import { AppState, AuthorProfile, GeneratedScript, LanguageProfile } from '../types';
+
+import { AppState } from '../types';
 
 // Keys for LocalStorage
 const SESSION_KEY = 'scriptflow_session_user_id';
@@ -28,16 +29,13 @@ const getUserKey = (userId: number) => `${DB_PREFIX}${userId}`;
 
 export const saveUserData = (userId: number, data: AppState) => {
   try {
-    // We only save the persistent parts of the state
+    // We save the entire state structure, now including projects
     const payload = {
       authorProfile: data.authorProfile,
-      languageProfile: data.languageProfile,
-      writingSamples: data.writingSamples,
-      scripts: data.scripts,
+      subscriptionPlan: data.subscriptionPlan,
       hasOnboarded: data.hasOnboarded,
-      // New Strategy Fields
-      contentPlan: data.contentPlan,
-      strategy: data.strategy
+      projects: data.projects,
+      currentProjectId: data.currentProjectId
     };
     localStorage.setItem(getUserKey(userId), JSON.stringify(payload));
   } catch (e) {
@@ -45,7 +43,7 @@ export const saveUserData = (userId: number, data: AppState) => {
   }
 };
 
-export const loadUserData = (userId: number): Partial<AppState> | null => {
+export const loadUserData = (userId: number): any | null => {
   try {
     const raw = localStorage.getItem(getUserKey(userId));
     if (!raw) return null;

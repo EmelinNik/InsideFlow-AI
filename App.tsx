@@ -12,7 +12,7 @@ import { ContentCalendar } from './components/ContentCalendar';
 import { PricingModal } from './components/PricingModal';
 import { Analytics } from './components/Analytics';
 import { PromptEditor } from './components/PromptEditor';
-import { AppState, AuthorProfile, LanguageProfile, GeneratedScript, TelegramUser, NarrativeVoice, TargetPlatform, ContentPlanItem, ContentStrategy, PostArchetype, PlanStatus, StrategyPreset, SubscriptionPlan, Project, PLAN_LIMITS } from './types';
+import { AppState, AuthorProfile, LanguageProfile, GeneratedScript, TelegramUser, NarrativeVoice, TargetPlatform, ContentPlanItem, ContentStrategy, PostArchetype, PlanStatus, StrategyPreset, SubscriptionPlan, Project, PLAN_LIMITS, PlatformBenchmark, DEFAULT_BENCHMARKS } from './types';
 import { getSessionUserId, setSessionUserId, clearSession, saveUserData, loadUserData, clearUserData } from './services/storage';
 import { History, Eye, Loader2, FolderOpen } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
@@ -56,7 +56,7 @@ const createNewProject = (name: string, baseProfile?: AuthorProfile): Project =>
     contentPlan: [],
     strategy: {
         platforms: [TargetPlatform.TELEGRAM],
-        postsPerWeek: 3,
+        postsCount: 10, // Default total posts
         personalizePerPlatform: false,
         generatePerPlatform: false,
         preset: StrategyPreset.BALANCED,
@@ -64,7 +64,8 @@ const createNewProject = (name: string, baseProfile?: AuthorProfile): Project =>
         startDate: new Date().toISOString().split('T')[0],
         endDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
     },
-    prompts: {} // Start with empty overrides (using defaults)
+    prompts: {}, // Start with empty overrides (using defaults)
+    benchmarks: {} // Start empty, let user define them or see references
 });
 
 const initialState: AppState = {
@@ -85,7 +86,7 @@ function App() {
   const [showPricing, setShowPricing] = useState(false);
   
   // State for passing data from Calendar to Generator
-  const [generatorConfig, setGeneratorConfig] = useState<{ topic: string; platform: TargetPlatform; archetype: PostArchetype } | null>(null);
+  const [generatorConfig, setGeneratorConfig] = useState<{ topic: string; platform: TargetPlatform; archetype: PostArchetype; description?: string } | null>(null);
 
   // Helper to access the active project safely
   const activeProject = state.projects.find(p => p.id === state.currentProjectId) || state.projects[0];
@@ -102,13 +103,37 @@ function App() {
           let projects = userData.projects || [];
           let currentProjectId = userData.currentProjectId;
 
-          // MIGRATION LOGIC: If projects exist but lack authorProfile, copy from global
+          // MIGRATION LOGIC:
+          // 1. If projects exist but lack authorProfile, copy from global
           if (projects.length > 0 && !projects[0].authorProfile && userData.authorProfile) {
               projects = projects.map((p: any) => ({
                   ...p,
                   authorProfile: { ...userData.authorProfile }
               }));
           }
+          
+          // 2. Migrate postsPerWeek to postsCount if needed
+          projects = projects.map((p: any) => {
+              if (p.strategy && typeof p.strategy.postsPerWeek === 'number' && !p.strategy.postsCount) {
+                   return {
+                       ...p,
+                       strategy: {
+                           ...p.strategy,
+                           postsCount: 7 // Default fallback if migration happens, or calculate logic: p.strategy.postsPerWeek * 2? Let's just default to a reasonable number.
+                       }
+                   }
+              }
+              // If strategy is totally missing
+              if (!p.strategy) {
+                  return { ...p, strategy: createNewProject('temp').strategy };
+              }
+              // Ensure prompts and benchmarks exist
+              return {
+                  ...p,
+                  prompts: p.prompts || {},
+                  benchmarks: p.benchmarks || {}
+              };
+          });
 
           // Fallback: Create first project from old single-state data
           if (projects.length === 0 && (userData.contentPlan || userData.languageProfile)) {
@@ -326,6 +351,10 @@ function App() {
     updateActiveProject(p => ({ ...p, prompts }));
   };
 
+  const handleUpdateBenchmarks = (benchmarks: Partial<Record<TargetPlatform, PlatformBenchmark>>) => {
+      updateActiveProject(p => ({ ...p, benchmarks }));
+  };
+
   const handleScriptGenerated = (script: GeneratedScript) => {
     updateActiveProject(p => {
         let updatedPlan = p.contentPlan;
@@ -378,7 +407,8 @@ function App() {
       setGeneratorConfig({
           topic: item.topic,
           platform: item.platform,
-          archetype: item.archetype
+          archetype: item.archetype,
+          description: item.description // Correctly passing the context
       });
       setActiveTab('create');
   };
@@ -426,13 +456,7 @@ function App() {
                 project={activeProject}
                 authorProfile={projectProfile}
                 onUpdatePlan={handleUpdatePlan}
-                // Analytics uses prompts for Analysis report, passing it down isn't strictly necessary if Analytics component logic handles overrides internally, 
-                // but currently Analytics component fetches directly. Let's assume standard behavior for now or update Analytics if needed.
-                // Updated: Analytics component calls analyzeAudienceInsights. We need to pass prompts there.
-                // NOTE: I will update Analytics component to accept prompts prop in next steps if needed, 
-                // for now keep it simple as Analytics was not heavily modified to accept prop yet in previous steps, 
-                // but let's assume we pass it implicitly via project object if I modify Analytics signature. 
-                // Actually, let's keep it simple.
+                onUpdateBenchmarks={handleUpdateBenchmarks}
             />
         );
       case 'create':

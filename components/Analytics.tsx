@@ -1,20 +1,32 @@
 
 import React, { useState, useEffect } from 'react';
-import { Project, ContentPlanItem, PlanStatus, AuthorProfile, ContentStrategy } from '../types';
+import { Project, ContentPlanItem, PlanStatus, AuthorProfile, ContentStrategy, TargetPlatform, PlatformBenchmark, DEFAULT_BENCHMARKS, PromptKey } from '../types';
 import { analyzeAudienceInsights } from '../services/geminiService';
-import { BarChart3, TrendingUp, Users, MessageSquare, Share2, Eye, BrainCircuit, Loader2, Sparkles, AlertCircle, CheckCircle2, ChevronRight, Calculator, RefreshCw, PenTool, HelpCircle, X, Percent, Heart } from 'lucide-react';
+import { BarChart3, TrendingUp, Users, MessageSquare, Share2, Eye, BrainCircuit, Loader2, Sparkles, AlertCircle, CheckCircle2, ChevronRight, Calculator, RefreshCw, PenTool, HelpCircle, X, Percent, Heart, Target, Save, Info } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
 interface AnalyticsProps {
   project: Project;
   authorProfile: AuthorProfile;
   onUpdatePlan: (newPlan: ContentPlanItem[]) => void;
+  onUpdateBenchmarks: (benchmarks: Partial<Record<TargetPlatform, PlatformBenchmark>>) => void;
 }
 
-export const Analytics: React.FC<AnalyticsProps> = ({ project, authorProfile, onUpdatePlan }) => {
+export const Analytics: React.FC<AnalyticsProps> = ({ project, authorProfile, onUpdatePlan, onUpdateBenchmarks }) => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [aiReport, setAiReport] = useState<string | null>(null);
-  const [showHelp, setShowHelp] = useState(false);
+  const [showBenchmarksConfig, setShowBenchmarksConfig] = useState(false);
+
+  // Local state for benchmarks form. Start with project benchmarks or empty structure (not defaults).
+  const [localBenchmarks, setLocalBenchmarks] = useState<Partial<Record<TargetPlatform, PlatformBenchmark>>>(
+      project.benchmarks || {}
+  );
+
+  useEffect(() => {
+      if (project.benchmarks) {
+          setLocalBenchmarks(project.benchmarks);
+      }
+  }, [project.benchmarks]);
 
   // Analyzed items are DONE items with at least some metrics
   const analyzedItems = project.contentPlan.filter(item => 
@@ -39,7 +51,13 @@ export const Analytics: React.FC<AnalyticsProps> = ({ project, authorProfile, on
   const handleRunAiAnalysis = async () => {
     setIsAnalyzing(true);
     try {
-      const report = await analyzeAudienceInsights(authorProfile, project.strategy, analyzedItems);
+      const report = await analyzeAudienceInsights(
+          authorProfile, 
+          project.strategy, 
+          analyzedItems, 
+          localBenchmarks,
+          project.prompts?.[PromptKey.AUDIENCE_INSIGHTS]
+      );
       setAiReport(report);
     } catch (e) {
       alert("Ошибка AI анализа.");
@@ -57,6 +75,38 @@ export const Analytics: React.FC<AnalyticsProps> = ({ project, authorProfile, on
           return item;
       });
       onUpdatePlan(newPlan);
+  };
+
+  const handleBenchmarkChange = (platform: TargetPlatform, field: keyof PlatformBenchmark, value: string) => {
+      const numValue = value === '' ? 0 : parseInt(value);
+      setLocalBenchmarks(prev => ({
+          ...prev,
+          [platform]: {
+              ...(prev[platform] || { reach: 0, likes: 0, comments: 0, reposts: 0 }),
+              [field]: isNaN(numValue) ? 0 : numValue
+          }
+      }));
+  };
+
+  const saveBenchmarks = () => {
+      onUpdateBenchmarks(localBenchmarks);
+      setShowBenchmarksConfig(false);
+  };
+
+  const saveSinglePlatform = (platform: TargetPlatform) => {
+      const updatedBenchmarks = {
+          ...project.benchmarks,
+          [platform]: localBenchmarks[platform]
+      };
+      // Type assertion needed because merging Partial record creates Partial record, 
+      // but if we know it's fine we can cast or let typescript infer correctly as Partial.
+      onUpdateBenchmarks(updatedBenchmarks as Partial<Record<TargetPlatform, PlatformBenchmark>>);
+      alert(`Стандарты для ${platform} сохранены.`);
+  };
+
+  const calculateER = (b: PlatformBenchmark | undefined) => {
+      if (!b || b.reach === 0) return 0;
+      return ((b.likes + b.comments + b.reposts) / b.reach * 100).toFixed(2);
   };
 
   // --- CHART HELPERS ---
@@ -81,11 +131,11 @@ export const Analytics: React.FC<AnalyticsProps> = ({ project, authorProfile, on
         
         <div className="flex gap-2">
             <button 
-                onClick={() => setShowHelp(!showHelp)}
-                className={`px-4 py-2.5 rounded-xl font-bold text-sm transition-all border flex items-center gap-2 ${showHelp ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                onClick={() => setShowBenchmarksConfig(!showBenchmarksConfig)}
+                className={`px-4 py-2.5 rounded-xl font-bold text-sm transition-all border flex items-center gap-2 ${showBenchmarksConfig ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
             >
-                <HelpCircle size={18} />
-                <span className="hidden md:inline">Справка и Нормы</span>
+                <Target size={18} />
+                <span className="hidden md:inline">Настройка KPI / Нормы</span>
             </button>
             {analyzedItems.length > 0 && (
             <button 
@@ -100,73 +150,104 @@ export const Analytics: React.FC<AnalyticsProps> = ({ project, authorProfile, on
         </div>
       </div>
 
-      {/* METRICS GUIDE PANEL */}
-      {showHelp && (
+      {/* BENCHMARKS CONFIG PANEL */}
+      {showBenchmarksConfig && (
           <div className="bg-white border border-indigo-100 rounded-2xl shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-4 relative z-10">
               <div className="bg-indigo-50 p-4 border-b border-indigo-100 flex justify-between items-center">
                   <h3 className="text-sm font-bold text-indigo-900 uppercase tracking-wider flex items-center gap-2">
-                      <Calculator size={16}/> Памятка по метрикам
+                      <Calculator size={16}/> Ваши Стандарты (KPI)
                   </h3>
-                  <button onClick={() => setShowHelp(false)} className="text-indigo-400 hover:text-indigo-700"><X size={18}/></button>
+                  <button onClick={() => setShowBenchmarksConfig(false)} className="text-indigo-400 hover:text-indigo-700"><X size={18}/></button>
               </div>
               <div className="p-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-                    <div>
-                        <h4 className="font-bold text-slate-800 mb-2 flex items-center gap-2 text-sm"><span className="bg-blue-500 w-2 h-2 rounded-full"></span>Telegram</h4>
-                        <ul className="text-xs space-y-2 text-slate-600">
-                            <li className="flex justify-between border-b border-slate-50 pb-1"><span>Охват</span><span className="font-medium">Глазик 👁️</span></li>
-                            <li className="flex justify-between border-b border-slate-50 pb-1"><span>Реакции</span><span className="font-medium">Эмодзи ❤️</span></li>
-                        </ul>
-                    </div>
-                    <div>
-                        <h4 className="font-bold text-slate-800 mb-2 flex items-center gap-2 text-sm"><span className="bg-blue-600 w-2 h-2 rounded-full"></span>ВКонтакте</h4>
-                        <ul className="text-xs space-y-2 text-slate-600">
-                            <li className="flex justify-between border-b border-slate-50 pb-1"><span>Охват</span><span className="font-medium">Счетчик 👁️</span></li>
-                            <li className="flex justify-between border-b border-slate-50 pb-1"><span>Лайки</span><span className="font-medium">Сердечко ❤️</span></li>
-                        </ul>
-                    </div>
-                    <div>
-                        <h4 className="font-bold text-slate-800 mb-2 flex items-center gap-2 text-sm"><span className="bg-purple-600 w-2 h-2 rounded-full"></span>Instagram</h4>
-                        <ul className="text-xs space-y-2 text-slate-600">
-                            <li className="flex justify-between border-b border-slate-50 pb-1"><span>Охват</span><span className="font-medium">Insights 📊</span></li>
-                            <li className="flex justify-between border-b border-slate-50 pb-1"><span>Лайки</span><span className="font-medium">Сердечко ❤️</span></li>
-                        </ul>
-                    </div>
-                    <div>
-                        <h4 className="font-bold text-slate-800 mb-2 flex items-center gap-2 text-sm"><span className="bg-red-600 w-2 h-2 rounded-full"></span>YouTube</h4>
-                        <ul className="text-xs space-y-2 text-slate-600">
-                            <li className="flex justify-between border-b border-slate-50 pb-1"><span>Охват</span><span className="font-medium">Views ▶️</span></li>
-                            <li className="flex justify-between border-b border-slate-50 pb-1"><span>Лайки</span><span className="font-medium">Палец 👍</span></li>
-                        </ul>
-                    </div>
+                <p className="text-xs text-slate-500 mb-6 max-w-2xl leading-relaxed">
+                    Здесь вы можете задать свои личные KPI. Если оставить поля пустыми, ИИ будет просто анализировать динамику (рост/падение). 
+                    Для справки мы показываем средние цифры по рынку, но вводить их необязательно.
+                </p>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                    {Object.values(TargetPlatform).map((platform) => {
+                         const b = localBenchmarks[platform] || { reach: 0, likes: 0, comments: 0, reposts: 0 };
+                         const ref = DEFAULT_BENCHMARKS[platform];
+                         const er = calculateER(b);
+                         
+                         // Check if this specific platform has been edited compared to saved project state
+                         // (Simple check: always show save button for individual control)
+                         
+                         return (
+                            <div key={platform} className="bg-slate-50 rounded-xl border border-slate-200 flex flex-col">
+                                <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-white rounded-t-xl">
+                                    <h4 className="font-bold text-slate-800 text-xs uppercase tracking-wide truncate max-w-[120px]" title={platform}>
+                                        {platform.split(' ')[0]}
+                                    </h4>
+                                    <button 
+                                        onClick={() => saveSinglePlatform(platform)}
+                                        className="text-[10px] bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 text-slate-500 px-2 py-1 rounded border border-slate-200 transition-colors flex items-center gap-1"
+                                    >
+                                        <Save size={10}/> Сохранить
+                                    </button>
+                                </div>
+                                
+                                <div className="p-4 space-y-3">
+                                    {/* INPUTS */}
+                                    <div>
+                                        <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Целевой Охват</label>
+                                        <input 
+                                            type="number" 
+                                            className="w-full text-xs p-2 border border-slate-200 rounded outline-none focus:ring-1 focus:ring-indigo-400 bg-white"
+                                            value={b.reach || ''}
+                                            onChange={(e) => handleBenchmarkChange(platform, 'reach', e.target.value)}
+                                            placeholder="0"
+                                        />
+                                    </div>
+                                    <div className="grid grid-cols-3 gap-2">
+                                        <div>
+                                            <label className="text-[9px] font-bold text-slate-400 uppercase block mb-1">Лайки</label>
+                                            <input type="number" className="w-full text-xs p-2 border border-slate-200 rounded outline-none bg-white" value={b.likes || ''} onChange={(e) => handleBenchmarkChange(platform, 'likes', e.target.value)} placeholder="0" />
+                                        </div>
+                                        <div>
+                                            <label className="text-[9px] font-bold text-slate-400 uppercase block mb-1">Комм.</label>
+                                            <input type="number" className="w-full text-xs p-2 border border-slate-200 rounded outline-none bg-white" value={b.comments || ''} onChange={(e) => handleBenchmarkChange(platform, 'comments', e.target.value)} placeholder="0" />
+                                        </div>
+                                        <div>
+                                            <label className="text-[9px] font-bold text-slate-400 uppercase block mb-1">Репост</label>
+                                            <input type="number" className="w-full text-xs p-2 border border-slate-200 rounded outline-none bg-white" value={b.reposts || ''} onChange={(e) => handleBenchmarkChange(platform, 'reposts', e.target.value)} placeholder="0" />
+                                        </div>
+                                    </div>
+
+                                    {/* YOUR ER */}
+                                    <div className="pt-2 border-t border-slate-200 flex justify-between items-center">
+                                        <span className="text-[10px] text-slate-500 font-bold uppercase">Ваш ER:</span>
+                                        <span className={`text-sm font-bold ${Number(er) > 0 ? 'text-indigo-600' : 'text-slate-300'}`}>{er}%</span>
+                                    </div>
+
+                                    {/* REFERENCE INFO BLOCK */}
+                                    {ref && (
+                                        <div className="mt-2 bg-indigo-50/50 p-2 rounded border border-indigo-100 text-[9px] text-slate-500">
+                                            <div className="font-bold text-indigo-400 uppercase mb-1 flex items-center gap-1">
+                                                <Info size={10}/> Рыночная норма
+                                            </div>
+                                            <div className="flex justify-between mb-0.5">
+                                                <span>Охват:</span> <span>{ref.reach}</span>
+                                            </div>
+                                            <div className="flex justify-between">
+                                                <span>ER:</span> <span>{((ref.likes + ref.comments + ref.reposts) / ref.reach * 100).toFixed(1)}%</span>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                         );
+                    })}
                 </div>
 
-                <div className="bg-slate-50 rounded-xl p-4 border border-slate-100">
-                    <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2">
-                        <Percent size={14}/> Стандартные значения (Норма ER)
-                    </h4>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                         <div className="bg-white p-3 rounded-lg border border-slate-200">
-                             <div className="text-xs text-slate-500 mb-1">Telegram</div>
-                             <div className="font-bold text-indigo-600">10% – 20%</div>
-                             <div className="text-[10px] text-slate-400">от подписчиков</div>
-                         </div>
-                         <div className="bg-white p-3 rounded-lg border border-slate-200">
-                             <div className="text-xs text-slate-500 mb-1">Instagram</div>
-                             <div className="font-bold text-indigo-600">3% – 7%</div>
-                             <div className="text-[10px] text-slate-400">от подписчиков</div>
-                         </div>
-                         <div className="bg-white p-3 rounded-lg border border-slate-200">
-                             <div className="text-xs text-slate-500 mb-1">ВКонтакте</div>
-                             <div className="font-bold text-indigo-600">1.5% – 3%</div>
-                             <div className="text-[10px] text-slate-400">от подписчиков</div>
-                         </div>
-                         <div className="bg-white p-3 rounded-lg border border-slate-200">
-                             <div className="text-xs text-slate-500 mb-1">YouTube</div>
-                             <div className="font-bold text-indigo-600">5% – 10%</div>
-                             <div className="text-[10px] text-slate-400">от просмотров</div>
-                         </div>
-                    </div>
+                <div className="mt-6 flex justify-end">
+                    <button 
+                        onClick={() => setShowBenchmarksConfig(false)}
+                        className="bg-slate-100 text-slate-600 px-6 py-2 rounded-lg text-sm font-bold hover:bg-slate-200"
+                    >
+                        Закрыть
+                    </button>
                 </div>
               </div>
           </div>

@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { AuthorProfile, LanguageProfile, TargetPlatform, GeneratedScript, PostArchetype, GeneratedOption, PLATFORM_COMPATIBILITY, PromptKey } from '../types';
 import { generateUnitOptions, getArchetypeFormula, getUnitName } from '../services/geminiService';
-import { Loader2, Send, Copy, FileText, CheckCircle2, LayoutTemplate, Smartphone, MousePointerClick, ArrowRight, Play, RefreshCw, ChevronRight, Sparkles, Star, ThumbsUp, AlertCircle } from 'lucide-react';
+import { Loader2, Send, Copy, FileText, CheckCircle2, LayoutTemplate, Smartphone, MousePointerClick, ArrowRight, Play, RefreshCw, ChevronRight, Sparkles, Star, ThumbsUp, AlertCircle, AlertTriangle, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
 interface ContentGeneratorProps {
@@ -12,9 +12,11 @@ interface ContentGeneratorProps {
   onScriptGenerated: (script: GeneratedScript) => void;
   initialConfig?: { topic: string; platform: TargetPlatform; archetype: PostArchetype; description?: string } | null;
   className?: string;
+  compact?: boolean;
+  onCancel?: () => void;
 }
 
-type GenerationStatus = 'idle' | 'loading' | 'selecting' | 'finished';
+type GenerationStatus = 'idle' | 'loading' | 'selecting' | 'finished' | 'error';
 
 export const ContentGenerator: React.FC<ContentGeneratorProps> = ({
   authorProfile,
@@ -22,74 +24,103 @@ export const ContentGenerator: React.FC<ContentGeneratorProps> = ({
   prompts,
   onScriptGenerated,
   initialConfig,
-  className
+  className,
+  compact = false,
+  onCancel
 }) => {
-  const [topic, setTopic] = useState('');
-  const [description, setDescription] = useState('');
-  const [platform, setPlatform] = useState<TargetPlatform>(TargetPlatform.TELEGRAM);
-  const [archetype, setArchetype] = useState<PostArchetype>(PostArchetype.SHORT_POST);
+  // Initialize state directly from props to avoid race conditions
+  const [topic, setTopic] = useState(initialConfig?.topic || '');
+  const [description, setDescription] = useState(initialConfig?.description || '');
+  const [platform, setPlatform] = useState<TargetPlatform>(initialConfig?.platform || TargetPlatform.TELEGRAM);
+  const [archetype, setArchetype] = useState<PostArchetype>(initialConfig?.archetype || PostArchetype.SHORT_POST);
+  
   const [status, setStatus] = useState<GenerationStatus>('idle');
   const [unitSequence, setUnitSequence] = useState<string[]>([]);
   const [currentUnitIndex, setCurrentUnitIndex] = useState(0);
   const [currentOptions, setCurrentOptions] = useState<GeneratedOption[]>([]);
   const [assembledUnits, setAssembledUnits] = useState<Record<string, string>>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  
+  // Auto-start ref to prevent double firing
+  const hasAutoStarted = useRef(false);
 
+  // Platform Compatibility Safety Check
   useEffect(() => {
-    if (initialConfig) {
-        setTopic(initialConfig.topic);
-        setPlatform(initialConfig.platform);
-        setArchetype(initialConfig.archetype);
-        setDescription(initialConfig.description || '');
-        setStatus('idle');
-        setAssembledUnits({});
-        setUnitSequence([]);
-    }
-  }, [initialConfig]);
-
-  useEffect(() => {
-      const allowedArchetypes = PLATFORM_COMPATIBILITY[platform];
-      // Safety check: ensure current archetype is valid for new platform
-      if (!allowedArchetypes?.includes(archetype)) {
-          setArchetype(allowedArchetypes?.[0] || PostArchetype.SHORT_POST);
+      // Only run this check if we are NOT in the middle of a generation sequence initiated by initialConfig
+      // and if the user manually changed the platform after init.
+      if (status === 'idle' && !initialConfig) {
+          const allowedArchetypes = PLATFORM_COMPATIBILITY[platform];
+          if (!allowedArchetypes?.includes(archetype)) {
+              setArchetype(allowedArchetypes?.[0] || PostArchetype.SHORT_POST);
+          }
       }
   }, [platform]);
 
-  const canStart = topic.length > 0 && languageProfile.isAnalyzed;
+  // Auto-start logic - MOUNT ONLY to guarantee execution
+  useEffect(() => {
+      if (initialConfig && !hasAutoStarted.current) {
+          if (initialConfig.topic) {
+             hasAutoStarted.current = true;
+             // Use the initial values explicitly to avoid stale closure
+             handleStart(initialConfig.archetype, initialConfig.topic);
+          }
+      }
+  }, []);
+
+  const canStart = topic.length > 0;
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [assembledUnits]);
+  }, [assembledUnits, currentOptions]);
 
-  const handleStart = () => {
-    const sequence = getArchetypeFormula(archetype);
+  const handleStart = (archetypeOverride?: PostArchetype, topicOverride?: string) => {
+    const archToUse = archetypeOverride || archetype;
+    const topicToUse = topicOverride || topic;
+
+    if (!topicToUse) return;
+
+    const sequence = getArchetypeFormula(archToUse);
+    
     setUnitSequence(sequence);
     setCurrentUnitIndex(0);
     setAssembledUnits({});
     setStatus('loading');
-    fetchOptionsForUnit(sequence[0], {});
+    
+    // Slight delay to allow UI to render loading state
+    setTimeout(() => {
+        fetchOptionsForUnit(sequence[0], {}, archToUse, topicToUse);
+    }, 100);
   };
 
-  const fetchOptionsForUnit = async (unitKey: string, currentAssembled: Record<string, string>) => {
+  const fetchOptionsForUnit = async (
+      unitKey: string, 
+      currentAssembled: Record<string, string>, 
+      archToUse: PostArchetype,
+      currentTopic: string = topic
+    ) => {
     try {
       const contextText = Object.values(currentAssembled).join('\n\n');
-      // Pass ALL prompts so the service can pick specific platform/format instructions
       const options = await generateUnitOptions(
-          topic, 
+          currentTopic, 
           platform, 
-          archetype, 
+          archToUse, 
           authorProfile, 
           languageProfile, 
           unitKey, 
           contextText, 
           description,
-          prompts // Passing the full dictionary
+          prompts
       );
+      
+      if (!options || options.length === 0) {
+          throw new Error("No options generated");
+      }
+
       setCurrentOptions(options);
       setStatus('selecting');
     } catch (error) {
-      alert("Ошибка генерации. Попробуйте еще раз.");
-      setStatus('idle');
+      console.error("Gen Error", error);
+      setStatus('error');
     }
   };
 
@@ -98,10 +129,11 @@ export const ContentGenerator: React.FC<ContentGeneratorProps> = ({
     const newAssembled = { ...assembledUnits, [currentUnitKey]: optionText };
     setAssembledUnits(newAssembled);
     const nextIndex = currentUnitIndex + 1;
+    
     if (nextIndex < unitSequence.length) {
       setCurrentUnitIndex(nextIndex);
       setStatus('loading');
-      fetchOptionsForUnit(unitSequence[nextIndex], newAssembled);
+      fetchOptionsForUnit(unitSequence[nextIndex], newAssembled, archetype);
     } else {
       finishGeneration(newAssembled);
     }
@@ -110,214 +142,278 @@ export const ContentGenerator: React.FC<ContentGeneratorProps> = ({
   const finishGeneration = (finalUnits: Record<string, string>) => {
     setStatus('finished');
     let finalMarkdown = `# ${topic}\n*${platform} | ${archetype}*\n\n`;
-    unitSequence.forEach(key => {
-        if (key === 'INSIGHT') {
-             finalMarkdown += `> **${finalUnits[key]}**\n\n`;
-        } else {
-             finalMarkdown += `${finalUnits[key]}\n\n`;
+    
+    // Reconstruct in order
+    unitSequence.forEach(unitKey => {
+        if (finalUnits[unitKey]) {
+            finalMarkdown += `${finalUnits[unitKey]}\n\n`;
         }
     });
-    const newScript: GeneratedScript = {
+
+    onScriptGenerated({
       id: Date.now().toString(),
       topic,
       platform,
       content: finalMarkdown,
       createdAt: new Date().toISOString()
-    };
-    onScriptGenerated(newScript);
+    });
   };
 
-  const handleReset = () => {
-    setStatus('idle');
-    setUnitSequence([]);
-    setCurrentUnitIndex(0);
-    setAssembledUnits({});
-    setCurrentOptions([]);
+  const handleCopyResult = () => {
+      const text = Object.values(assembledUnits).join('\n\n');
+      navigator.clipboard.writeText(text);
+      alert('Текст скопирован!');
   };
 
-  const [copied, setCopied] = useState(false);
-  const handleCopy = () => {
-    const text = unitSequence.map(key => assembledUnits[key]).join('\n\n');
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  const currentUnitKey = unitSequence[currentUnitIndex];
-  const progressPercent = unitSequence.length > 0 
-    ? Math.round((currentUnitIndex / unitSequence.length) * 100) 
-    : 0;
-
-  const allowedArchetypes = PLATFORM_COMPATIBILITY[platform] || [];
-  const recommendations = allowedArchetypes.slice(0, 2);
+  // Renders the sequence of completed blocks
+  const renderHistory = () => (
+    <div className="space-y-4">
+      {unitSequence.slice(0, currentUnitIndex).map((unitKey, idx) => (
+        <div key={unitKey} className="bg-slate-50 border border-slate-200 rounded-lg p-3 animate-in slide-in-from-top-2">
+          <div className="text-[10px] uppercase font-bold text-slate-400 mb-1 flex items-center gap-1">
+             <CheckCircle2 size={12} className="text-green-500"/>
+             {getUnitName(unitKey)}
+          </div>
+          <div className="prose prose-sm prose-slate max-w-none text-slate-800 leading-snug">
+             <ReactMarkdown>{assembledUnits[unitKey]}</ReactMarkdown>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 
   return (
-    <div className={`flex flex-col gap-4 md:gap-6 ${className || 'max-w-7xl mx-auto p-4 md:p-6 h-full'}`}>
+    <div className={`flex flex-col h-full bg-white ${className}`}>
       
-      {/* HEADER CONFIG */}
-      <div className={`bg-white p-4 md:p-5 rounded-xl border border-slate-200 shadow-sm transition-all ${status !== 'idle' ? 'hidden md:flex' : 'flex'} flex-col md:flex-row gap-4 items-stretch md:items-end`}>
-         {status === 'idle' ? (
-            <>
-                <div className="flex-1 space-y-1">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">О чем пишем?</label>
-                    <input className="w-full p-2.5 border border-slate-200 bg-slate-50 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Тема поста..." value={topic} onChange={e => setTopic(e.target.value)} />
-                </div>
-                <div className="grid grid-cols-2 md:flex gap-3">
-                    <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Площадка</label>
-                        <select className="w-full p-2.5 border border-slate-200 bg-white rounded-lg text-xs" value={platform} onChange={e => setPlatform(e.target.value as TargetPlatform)}>
-                            {Object.values(TargetPlatform).map(p => <option key={p} value={p}>{p}</option>)}
-                        </select>
-                    </div>
-                    <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Формат</label>
-                        <select className="w-full p-2.5 border border-slate-200 bg-white rounded-lg text-xs" value={archetype} onChange={e => setArchetype(e.target.value as PostArchetype)}>
-                            {allowedArchetypes.map(a => <option key={a} value={a}>{a}</option>)}
-                        </select>
-                    </div>
-                </div>
-                <button onClick={handleStart} disabled={!canStart} className="bg-indigo-600 text-white px-8 py-3 rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-indigo-700 disabled:opacity-50 transition-all shadow-lg shadow-indigo-100 flex items-center justify-center gap-2">
-                    <Play size={14} fill="currentColor" /> Старт
-                </button>
-            </>
-         ) : (
-             <div className="flex items-center justify-between w-full">
-                 <div className="flex flex-col md:flex-row md:items-center gap-1 md:gap-4">
-                     <span className="font-bold text-sm text-slate-900 truncate max-w-[200px]">{topic}</span>
-                     <div className="flex gap-2">
-                        <span className="bg-indigo-50 text-indigo-600 text-[8px] font-bold uppercase px-1.5 py-0.5 rounded">{archetype}</span>
-                        <span className="bg-slate-100 text-slate-500 text-[8px] font-bold uppercase px-1.5 py-0.5 rounded">{platform.split(' ')[0]}</span>
-                     </div>
-                 </div>
-                 <button onClick={handleReset} className="text-slate-400 hover:text-red-500 flex items-center gap-1 text-[10px] font-bold uppercase">
-                    <RefreshCw size={12} /> Сброс
-                 </button>
-             </div>
-         )}
-      </div>
+      {/* CONFIG PANEL (Only visible if idle and NOT compact mode) */}
+      {status === 'idle' && !compact && (
+          <div className="flex-1 overflow-y-auto">
+              <div className="max-w-xl mx-auto space-y-6 py-8">
+                  <div className="text-center mb-8">
+                      <div className="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                          <LayoutTemplate size={24} />
+                      </div>
+                      <h2 className="text-2xl font-bold text-slate-900">Конструктор Сценария</h2>
+                      <p className="text-slate-500 mt-2">Соберите идеальный пост блок за блоком.</p>
+                  </div>
 
-      <div className="flex-1 flex flex-col md:flex-row gap-6 overflow-hidden">
-        {/* LEFT PANEL */}
-        <div className="w-full md:w-1/2 flex flex-col h-[500px] md:h-full bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden relative">
-            {status === 'idle' && (
-                <div className="flex-1 flex flex-col items-center justify-center text-slate-400 p-8 text-center">
-                    <MousePointerClick size={32} className="mb-4 text-slate-200" />
-                    <h3 className="text-sm font-bold text-slate-800 uppercase tracking-widest mb-2">Режим Режиссёра</h3>
-                    <p className="text-xs max-w-xs leading-relaxed">
-                        ИИ предложит варианты для каждой части поста, <br className="hidden md:block"/> а вы выберете лучший.
-                    </p>
-                    {description && (
-                        <div className="mt-4 p-3 bg-slate-50 rounded text-xs text-left w-full max-w-sm border border-slate-100">
-                             <span className="font-bold block mb-1">Доп. контекст:</span>
-                             {description}
-                        </div>
-                    )}
-                    {!languageProfile.isAnalyzed && (
-                         <div className="mt-6 bg-amber-50 text-amber-800 px-4 py-2 rounded-lg text-[10px] font-bold uppercase border border-amber-100">
-                            ⚠️ Обучите стиль
-                         </div>
-                    )}
-                </div>
-            )}
+                  {!languageProfile.isAnalyzed && (
+                      <div className="bg-amber-50 p-4 rounded-xl border border-amber-200 flex gap-3 items-start">
+                          <AlertTriangle size={20} className="text-amber-600 shrink-0 mt-0.5"/>
+                          <div>
+                              <h4 className="text-sm font-bold text-amber-800">Стиль не обучен</h4>
+                              <p className="text-xs text-amber-700 mt-1">
+                                  ИИ будет использовать нейтральный тон. Для лучших результатов добавьте примеры текстов во вкладке "Стиль".
+                              </p>
+                          </div>
+                      </div>
+                  )}
 
-            {status === 'loading' && (
-                <div className="flex-1 flex flex-col items-center justify-center text-indigo-600 p-8">
-                    <Loader2 size={32} className="animate-spin mb-4" />
-                    <h3 className="text-xs font-bold uppercase tracking-widest">Генерация...</h3>
-                    <p className="text-[10px] text-slate-400 mt-2 font-mono">
-                        {getUnitName(currentUnitKey)}
-                    </p>
-                </div>
-            )}
+                  <div className="space-y-4">
+                      <div>
+                          <label className="block text-sm font-bold text-slate-700 mb-1">О чем пишем?</label>
+                          <input 
+                              className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                              placeholder="Тема поста..."
+                              value={topic}
+                              onChange={(e) => setTopic(e.target.value)}
+                          />
+                      </div>
+                      
+                      <div>
+                          <label className="block text-sm font-bold text-slate-700 mb-1">Дополнительные факты (контекст)</label>
+                          <textarea 
+                              className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none h-20 text-sm resize-none"
+                              placeholder="Цифры, детали, имена, которые нужно упомянуть..."
+                              value={description}
+                              onChange={(e) => setDescription(e.target.value)}
+                          />
+                      </div>
 
-            {status === 'selecting' && (
-                <div className="flex-1 flex flex-col h-full">
-                    <div className="p-3 bg-indigo-50 border-b border-indigo-100 flex justify-between items-center">
-                        <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest">
-                            Блок {currentUnitIndex + 1}/{unitSequence.length}: {getUnitName(currentUnitKey)}
-                        </span>
-                    </div>
-                    <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/50">
-                        {currentOptions.map((opt, idx) => (
-                            <div 
-                                key={idx}
-                                onClick={() => handleSelectOption(opt.text)}
-                                className={`p-4 rounded-xl cursor-pointer transition-all border ${opt.isBest ? 'bg-indigo-50 border-indigo-500 ring-2 ring-indigo-500/10' : 'bg-white border-slate-200'}`}
-                            >
-                                <div className="flex gap-3">
-                                    <span className="w-5 h-5 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center text-[10px] font-bold shrink-0">{idx + 1}</span>
-                                    <p className="text-sm text-slate-800 leading-relaxed font-medium">{opt.text}</p>
-                                </div>
-                                {opt.isBest && (
-                                    <div className="mt-2 pl-8 flex items-center gap-1 text-[9px] font-bold text-indigo-600 uppercase tracking-wider">
-                                        <Star size={10} fill="currentColor"/> AI Рекомендует
-                                    </div>
-                                )}
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            )}
+                      <div className="grid grid-cols-2 gap-4">
+                          <div>
+                              <label className="block text-sm font-bold text-slate-700 mb-1 flex items-center gap-1"><Smartphone size={14}/> Платформа</label>
+                              <select 
+                                  className="w-full p-3 border border-slate-300 rounded-lg bg-white text-sm"
+                                  value={platform}
+                                  onChange={(e) => setPlatform(e.target.value as TargetPlatform)}
+                              >
+                                  {Object.values(TargetPlatform).map(p => (
+                                      <option key={p} value={p}>{p}</option>
+                                  ))}
+                              </select>
+                          </div>
+                          <div>
+                              <label className="block text-sm font-bold text-slate-700 mb-1 flex items-center gap-1"><LayoutTemplate size={14}/> Формат</label>
+                              <select 
+                                  className="w-full p-3 border border-slate-300 rounded-lg bg-white text-sm"
+                                  value={archetype}
+                                  onChange={(e) => setArchetype(e.target.value as PostArchetype)}
+                              >
+                                  {(PLATFORM_COMPATIBILITY[platform] || []).map(a => (
+                                      <option key={a} value={a}>{a}</option>
+                                  ))}
+                              </select>
+                          </div>
+                      </div>
 
-            {status === 'finished' && (
-                <div className="flex-1 flex flex-col items-center justify-center text-green-600 p-8 text-center">
-                    <div className="w-16 h-16 bg-green-50 rounded-full flex items-center justify-center mb-4">
-                        <CheckCircle2 size={32} />
-                    </div>
-                    <h3 className="text-lg font-bold text-slate-900 uppercase tracking-widest mb-4">Готово!</h3>
-                    <div className="flex flex-col gap-2 w-full">
-                        <button onClick={handleCopy} className="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold text-xs uppercase tracking-widest shadow-lg shadow-indigo-100">
-                            {copied ? 'Скопировано!' : 'Копировать всё'}
-                        </button>
-                        <button onClick={handleReset} className="w-full text-slate-400 py-2 text-[10px] font-bold uppercase">
-                            Создать новый
-                        </button>
-                    </div>
-                </div>
-            )}
-            
-            {status !== 'idle' && (
-                <div className="h-1 bg-slate-100 w-full mt-auto">
-                    <div className="h-full bg-indigo-500 transition-all duration-500" style={{ width: `${status === 'finished' ? 100 : progressPercent}%` }} />
-                </div>
-            )}
-        </div>
+                      <button 
+                          onClick={() => handleStart()}
+                          disabled={!canStart}
+                          className="w-full bg-indigo-600 text-white py-4 rounded-xl font-bold hover:bg-indigo-700 disabled:opacity-50 transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-100"
+                      >
+                          <Play size={20} fill="currentColor"/> Начать генерацию
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
 
-        {/* RIGHT PANEL: PREVIEW */}
-        <div className="w-full md:w-1/2 bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col h-[500px] md:h-full overflow-hidden">
-             <div className="p-3 border-b border-slate-100 bg-slate-50 flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                 <FileText size={14} /> Черновик
-             </div>
-             <div className="flex-1 overflow-y-auto p-5 md:p-8 font-serif leading-relaxed text-slate-800">
-                 {Object.keys(assembledUnits).length === 0 ? (
-                     <div className="h-full flex items-center justify-center opacity-30 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                         Здесь появится текст...
-                     </div>
-                 ) : (
-                     <div className="space-y-6">
-                         {unitSequence.map((key) => {
-                             if (!assembledUnits[key]) return null;
-                             return (
-                                 <div key={key} className="animate-in fade-in slide-in-from-bottom-2">
-                                     <div className="text-[8px] font-sans font-bold text-slate-300 uppercase mb-1 tracking-widest">
-                                        {getUnitName(key)}
-                                     </div>
-                                     {key === 'INSIGHT' ? (
-                                         <div className="pl-4 border-l-2 border-indigo-400 italic text-slate-700 bg-indigo-50/20 py-1">
-                                             {assembledUnits[key]}
-                                         </div>
-                                     ) : (
-                                         <p className="text-sm whitespace-pre-wrap">{assembledUnits[key]}</p>
-                                     )}
-                                 </div>
-                             );
-                         })}
-                         <div ref={messagesEndRef} />
-                     </div>
-                 )}
-             </div>
-        </div>
-      </div>
+      {/* ACTIVE GENERATION VIEW */}
+      {status !== 'idle' && (
+          <div className="flex-1 flex flex-col h-full overflow-hidden">
+              
+              {/* Header for Compact Mode */}
+              {compact && (
+                  <div className="flex justify-between items-center mb-2">
+                      <div className="text-sm font-bold text-indigo-700 flex items-center gap-2">
+                          <Sparkles size={16}/> Генерация с ИИ
+                      </div>
+                      {onCancel && (
+                          <button onClick={onCancel} className="text-slate-400 hover:text-slate-600">
+                              <X size={16}/>
+                          </button>
+                      )}
+                  </div>
+              )}
+
+              {/* Progress Bar */}
+              {status !== 'finished' && (
+                  <div className="flex items-center gap-2 py-2 border-b border-slate-100 bg-white shrink-0 mb-2">
+                      <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                          <div 
+                              className="h-full bg-indigo-600 transition-all duration-500 ease-out"
+                              style={{ width: `${((currentUnitIndex) / unitSequence.length) * 100}%` }}
+                          ></div>
+                      </div>
+                      <span className="text-[10px] font-bold text-slate-400 tabular-nums">
+                          {currentUnitIndex + 1} / {unitSequence.length}
+                      </span>
+                  </div>
+              )}
+
+              {/* Chat / History Area */}
+              <div className={`flex-1 overflow-y-auto ${compact ? 'max-h-[400px]' : 'p-4 md:p-6'} space-y-4 bg-slate-50/30`}>
+                  {renderHistory()}
+                  
+                  {/* Current Step Loading */}
+                  {status === 'loading' && (
+                      <div className="flex items-start gap-3 animate-in fade-in slide-in-from-bottom-2">
+                          <div className="w-6 h-6 rounded-full bg-indigo-600 flex items-center justify-center shrink-0 shadow-sm shadow-indigo-200">
+                              <Sparkles size={12} className="text-white animate-pulse" />
+                          </div>
+                          <div className="space-y-1">
+                              <div className="text-xs font-medium text-slate-500">
+                                  Пишу блок: <span className="text-indigo-600 font-bold">{getUnitName(unitSequence[currentUnitIndex])}</span>...
+                              </div>
+                              <div className="flex gap-1">
+                                  <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce"></div>
+                                  <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:0.2s]"></div>
+                                  <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:0.4s]"></div>
+                              </div>
+                          </div>
+                      </div>
+                  )}
+
+                  {/* Options Selection */}
+                  {status === 'selecting' && (
+                      <div className="space-y-3 animate-in fade-in slide-in-from-bottom-4">
+                          <div className="flex items-center gap-2 text-xs font-bold text-slate-700">
+                              <MousePointerClick size={14} className="text-indigo-600"/>
+                              Выберите вариант:
+                          </div>
+                          
+                          <div className="grid gap-3">
+                              {currentOptions.map((option, idx) => (
+                                  <div 
+                                      key={idx}
+                                      onClick={() => handleSelectOption(option.text)}
+                                      className="group bg-white p-4 rounded-xl border border-slate-200 shadow-sm hover:border-indigo-500 hover:ring-1 hover:ring-indigo-500 cursor-pointer transition-all relative"
+                                  >
+                                      <div className="prose prose-sm prose-slate max-w-none mb-2 text-slate-800 leading-snug">
+                                          <ReactMarkdown>{option.text}</ReactMarkdown>
+                                      </div>
+                                      
+                                      <div className="pt-2 border-t border-slate-100 flex justify-between items-center mt-2">
+                                          <p className="text-[10px] text-slate-400 italic">{option.reasoning}</p>
+                                          <button className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
+                                              Выбрать <ArrowRight size={10}/>
+                                          </button>
+                                      </div>
+
+                                      {option.isBest && (
+                                          <div className="absolute -top-2 -right-2 bg-amber-400 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full shadow-sm flex items-center gap-1">
+                                              <Star size={8} fill="currentColor"/> AI Choice
+                                          </div>
+                                      )}
+                                  </div>
+                              ))}
+                          </div>
+                          
+                          <div className="flex justify-center pt-2">
+                              <button 
+                                  onClick={() => fetchOptionsForUnit(unitSequence[currentUnitIndex], assembledUnits, archetype)}
+                                  className="text-[10px] text-slate-500 flex items-center gap-1 hover:text-indigo-600 transition-colors"
+                              >
+                                  <RefreshCw size={10}/> Еще варианты
+                              </button>
+                          </div>
+                      </div>
+                  )}
+
+                  {/* Error State */}
+                  {status === 'error' && (
+                      <div className="bg-red-50 p-4 rounded-xl border border-red-200 text-center">
+                          <AlertCircle size={20} className="mx-auto text-red-500 mb-2"/>
+                          <h4 className="font-bold text-red-800 text-sm">Ошибка генерации</h4>
+                          <p className="text-xs text-red-600 mb-3">Не удалось получить ответ.</p>
+                          <button 
+                              onClick={() => fetchOptionsForUnit(unitSequence[currentUnitIndex], assembledUnits, archetype)}
+                              className="bg-white border border-red-200 text-red-600 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-red-50"
+                          >
+                              Повторить
+                          </button>
+                      </div>
+                  )}
+
+                  <div ref={messagesEndRef} />
+              </div>
+          </div>
+      )}
+
+      {/* FALLBACK FOR COMPACT MODE IF NO TOPIC */}
+      {status === 'idle' && compact && !topic && (
+          <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
+               <p className="text-sm text-slate-500 mb-4">Тема поста не указана. Введите тему в настройках выше, чтобы начать.</p>
+               <button 
+                  onClick={onCancel}
+                  className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg text-sm font-medium"
+               >
+                   Вернуться к настройкам
+               </button>
+          </div>
+      )}
+      {/* FALLBACK FOR COMPACT MODE IF HAS TOPIC BUT DID NOT AUTOSTART (Safety) */}
+      {status === 'idle' && compact && topic && (
+          <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
+               <button 
+                  onClick={() => handleStart()}
+                  className="px-6 py-3 bg-indigo-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-indigo-100 flex items-center gap-2"
+               >
+                   <Play size={16} fill="currentColor"/> Запустить генерацию
+               </button>
+          </div>
+      )}
     </div>
   );
 };

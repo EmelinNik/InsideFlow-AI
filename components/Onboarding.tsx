@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { AuthorProfile, NarrativeVoice } from '../types';
 import { ArrowRight, Check, Sparkles, Loader2, Wand2 } from 'lucide-react';
@@ -115,7 +116,7 @@ export const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
     <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
       <div className="max-w-xl w-full bg-white rounded-2xl shadow-xl overflow-hidden">
         <div className="bg-indigo-600 p-6 text-white text-center">
-          <h2 className="text-2xl font-bold">Добро пожаловать в InsideFlow AI</h2>
+          <h2 className="text-2xl font-bold">Добро пожаловать в Контент.Редактор</h2>
           <p className="text-indigo-100 text-sm mt-1">Давайте создадим ваш профиль автора</p>
         </div>
 
@@ -135,11 +136,11 @@ export const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
             <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
               <h3 className="text-lg font-semibold text-slate-800">Кто вы?</h3>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Ваше имя</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Название проекта</label>
                 <input
                   type="text"
                   className="w-full border border-slate-300 bg-white text-slate-900 rounded-lg p-3 focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm transition-all"
-                  placeholder="например, Иван Петров"
+                  placeholder="например, Личный блог маркетолога"
                   value={formData.name || ''}
                   onChange={(e) => handleChange('name', e.target.value)}
                 />

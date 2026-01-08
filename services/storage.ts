@@ -34,6 +34,7 @@ export const saveUserData = (userId: number, data: AppState) => {
       authorProfile: data.authorProfile,
       subscriptionPlan: data.subscriptionPlan,
       hasOnboarded: data.hasOnboarded,
+      hasSeenGuide: data.hasSeenGuide,
       projects: data.projects,
       currentProjectId: data.currentProjectId
     };

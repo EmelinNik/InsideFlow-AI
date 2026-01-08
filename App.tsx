@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { Layout } from './components/Layout';
 import { Onboarding } from './components/Onboarding';
+import { OnboardingGuide } from './components/OnboardingGuide';
 import { StyleTrainer } from './components/StyleTrainer';
 import { ContentGenerator } from './components/ContentGenerator';
 import { ScriptModal } from './components/ScriptModal';
@@ -11,13 +12,11 @@ import { Landing } from './components/Landing';
 import { ContentCalendar } from './components/ContentCalendar';
 import { PricingModal } from './components/PricingModal';
 import { Analytics } from './components/Analytics';
-import { PromptEditor } from './components/PromptEditor';
-import { AppState, AuthorProfile, LanguageProfile, GeneratedScript, TelegramUser, NarrativeVoice, TargetPlatform, ContentPlanItem, ContentStrategy, PostArchetype, PlanStatus, StrategyPreset, SubscriptionPlan, Project, PLAN_LIMITS, PlatformBenchmark, DEFAULT_BENCHMARKS } from './types';
+import { AppState, AuthorProfile, LanguageProfile, GeneratedScript, TelegramUser, NarrativeVoice, TargetPlatform, ContentPlanItem, ContentStrategy, PostArchetype, PlanStatus, StrategyPreset, SubscriptionPlan, Project, PLAN_LIMITS } from './types';
 import { getSessionUserId, setSessionUserId, clearSession, saveUserData, loadUserData, clearUserData } from './services/storage';
 import { History, Eye, Loader2, FolderOpen } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
-// Default empty profile structure
 const defaultAuthorProfile: AuthorProfile = {
     name: '',
     role: '',
@@ -30,12 +29,10 @@ const defaultAuthorProfile: AuthorProfile = {
     taboos: '',
 };
 
-// Helper to create a fresh project
 const createNewProject = (name: string, baseProfile?: AuthorProfile): Project => ({
     id: Date.now().toString(),
     name: name,
     createdAt: new Date().toISOString(),
-    // Use base profile (e.g. from user login) or a blank one, but ensure specific fields are blank for new persona
     authorProfile: baseProfile ? { ...baseProfile, role: '', targetAudience: '', audiencePainPoints: '' } : { ...defaultAuthorProfile },
     languageProfile: {
         isAnalyzed: false,
@@ -56,20 +53,19 @@ const createNewProject = (name: string, baseProfile?: AuthorProfile): Project =>
     contentPlan: [],
     strategy: {
         platforms: [TargetPlatform.TELEGRAM],
-        postsCount: 10, // Default total posts
+        postsPerWeek: 3,
         personalizePerPlatform: false,
         generatePerPlatform: false,
         preset: StrategyPreset.BALANCED,
         weeklyFocus: '',
         startDate: new Date().toISOString().split('T')[0],
         endDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
-    },
-    prompts: {}, // Start with empty overrides (using defaults)
-    benchmarks: {} // Start empty, let user define them or see references
+    }
 });
 
 const initialState: AppState = {
   hasOnboarded: false,
+  hasSeenGuide: false,
   isAuthenticated: false,
   authorProfile: null,
   subscriptionPlan: SubscriptionPlan.PRO,
@@ -83,15 +79,13 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [selectedScript, setSelectedScript] = useState<GeneratedScript | null>(null);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [showGuide, setShowGuide] = useState(false);
   const [showPricing, setShowPricing] = useState(false);
   
-  // State for passing data from Calendar to Generator
-  const [generatorConfig, setGeneratorConfig] = useState<{ topic: string; platform: TargetPlatform; archetype: PostArchetype; description?: string } | null>(null);
+  const [generatorConfig, setGeneratorConfig] = useState<{ topic: string; platform: TargetPlatform; archetype: PostArchetype } | null>(null);
 
-  // Helper to access the active project safely
   const activeProject = state.projects.find(p => p.id === state.currentProjectId) || state.projects[0];
 
-  // --- INITIALIZATION ---
   useEffect(() => {
     const initApp = async () => {
       const currentUserId = getSessionUserId();
@@ -103,39 +97,13 @@ function App() {
           let projects = userData.projects || [];
           let currentProjectId = userData.currentProjectId;
 
-          // MIGRATION LOGIC:
-          // 1. If projects exist but lack authorProfile, copy from global
           if (projects.length > 0 && !projects[0].authorProfile && userData.authorProfile) {
               projects = projects.map((p: any) => ({
                   ...p,
                   authorProfile: { ...userData.authorProfile }
               }));
           }
-          
-          // 2. Migrate postsPerWeek to postsCount if needed
-          projects = projects.map((p: any) => {
-              if (p.strategy && typeof p.strategy.postsPerWeek === 'number' && !p.strategy.postsCount) {
-                   return {
-                       ...p,
-                       strategy: {
-                           ...p.strategy,
-                           postsCount: 7 // Default fallback if migration happens, or calculate logic: p.strategy.postsPerWeek * 2? Let's just default to a reasonable number.
-                       }
-                   }
-              }
-              // If strategy is totally missing
-              if (!p.strategy) {
-                  return { ...p, strategy: createNewProject('temp').strategy };
-              }
-              // Ensure prompts and benchmarks exist
-              return {
-                  ...p,
-                  prompts: p.prompts || {},
-                  benchmarks: p.benchmarks || {}
-              };
-          });
 
-          // Fallback: Create first project from old single-state data
           if (projects.length === 0 && (userData.contentPlan || userData.languageProfile)) {
               const migratedProject: Project = {
                   ...createNewProject("Мой Проект"),
@@ -176,15 +144,19 @@ function App() {
     initApp();
   }, []);
 
-  // --- PERSISTENCE ---
   useEffect(() => {
     if (!loading && state.isAuthenticated && state.authorProfile?.telegramId) {
        saveUserData(state.authorProfile.telegramId, state);
     }
   }, [state, loading]);
 
+  // Handle Guide Display
+  useEffect(() => {
+      if (!loading && state.isAuthenticated && !state.hasSeenGuide && !showOnboarding) {
+          setShowGuide(true);
+      }
+  }, [loading, state.isAuthenticated, state.hasSeenGuide, showOnboarding]);
 
-  // --- AUTH HANDLERS ---
   const handleTelegramLogin = (user: TelegramUser) => {
      setLoading(true);
      setSessionUserId(user.id);
@@ -224,18 +196,18 @@ function App() {
          };
 
          const firstProject = createNewProject("Мой Проект", newProfile);
-         // Copy fully filled profile to first project for seamless onboarding experience
          firstProject.authorProfile = { ...newProfile };
 
          setState({
              ...initialState,
              hasOnboarded: false,
+             hasSeenGuide: false, // New users see guide
              isAuthenticated: true,
              authorProfile: newProfile,
              projects: [firstProject],
              currentProjectId: firstProject.id
          });
-         setShowOnboarding(true);
+         setActiveTab('dashboard');
      }
      setLoading(false);
   };
@@ -245,7 +217,6 @@ function App() {
     setState(initialState);
   };
 
-  // --- PROJECT MANAGEMENT HANDLERS ---
   const handleCreateProject = (name: string) => {
       const limit = PLAN_LIMITS[state.subscriptionPlan];
       if (state.projects.length >= limit) {
@@ -253,7 +224,6 @@ function App() {
           return;
       }
       
-      // Use user's basic info for the new project but empty persona fields
       const newProj = createNewProject(name, state.authorProfile || undefined);
       
       setState(prev => ({
@@ -312,9 +282,7 @@ function App() {
       }));
   };
 
-  // --- APP LOGIC HANDLERS ---
   const handleOnboardingComplete = (profile: AuthorProfile) => {
-    // Update global state (as fallback/user data)
     setState(prev => ({
       ...prev,
       hasOnboarded: true,
@@ -324,14 +292,17 @@ function App() {
       }
     }));
 
-    // Update the active project's profile specifically
     updateActiveProject(p => ({
         ...p,
         authorProfile: { ...p.authorProfile, ...profile }
     }));
 
     setShowOnboarding(false);
-    setActiveTab('style');
+  };
+
+  const handleGuideClose = () => {
+      setShowGuide(false);
+      setState(prev => ({ ...prev, hasSeenGuide: true }));
   };
 
   const handleUpdateLanguageProfile = (profile: LanguageProfile) => {
@@ -339,20 +310,11 @@ function App() {
   };
 
   const handleUpdateAuthorProfile = (profile: AuthorProfile) => {
-    // IMPORTANT: Only update the project's profile
     updateActiveProject(p => ({ ...p, authorProfile: profile }));
   };
   
   const handleUpdateWritingSamples = (samples: string[]) => {
     updateActiveProject(p => ({ ...p, writingSamples: samples }));
-  };
-  
-  const handleUpdatePrompts = (prompts: Record<string, string>) => {
-    updateActiveProject(p => ({ ...p, prompts }));
-  };
-
-  const handleUpdateBenchmarks = (benchmarks: Partial<Record<TargetPlatform, PlatformBenchmark>>) => {
-      updateActiveProject(p => ({ ...p, benchmarks }));
   };
 
   const handleScriptGenerated = (script: GeneratedScript) => {
@@ -407,12 +369,10 @@ function App() {
       setGeneratorConfig({
           topic: item.topic,
           platform: item.platform,
-          archetype: item.archetype,
-          description: item.description // Correctly passing the context
+          archetype: item.archetype
       });
       setActiveTab('create');
   };
-
 
   if (loading) {
       return (
@@ -423,17 +383,15 @@ function App() {
   }
 
   if (showOnboarding) {
-    return <Onboarding onComplete={handleOnboardingComplete} />;
+    return <Onboarding onComplete={handleOnboardingComplete} onCancel={() => setShowOnboarding(false)} />;
   }
 
   if (!state.isAuthenticated) {
-    return <Landing onStart={() => setShowOnboarding(true)} onTelegramAuth={handleTelegramLogin} />;
+    return <Landing onStart={() => setActiveTab('dashboard')} onTelegramAuth={handleTelegramLogin} />;
   }
 
   const renderContent = () => {
-    // Ensure we always have a valid profile object for the project, even if new
     const projectProfile = activeProject.authorProfile || state.authorProfile || defaultAuthorProfile;
-    const projectPrompts = activeProject.prompts || {};
 
     switch (activeTab) {
       case 'calendar':
@@ -443,7 +401,6 @@ function App() {
                 languageProfile={activeProject.languageProfile}
                 plan={activeProject.contentPlan}
                 strategy={activeProject.strategy}
-                prompts={projectPrompts}
                 onUpdatePlan={handleUpdatePlan}
                 onUpdateStrategy={handleUpdateStrategy}
                 onGenerateContent={handleGenerateFromCalendar}
@@ -456,7 +413,6 @@ function App() {
                 project={activeProject}
                 authorProfile={projectProfile}
                 onUpdatePlan={handleUpdatePlan}
-                onUpdateBenchmarks={handleUpdateBenchmarks}
             />
         );
       case 'create':
@@ -464,7 +420,6 @@ function App() {
           <ContentGenerator
             authorProfile={projectProfile}
             languageProfile={activeProject.languageProfile}
-            prompts={projectPrompts}
             onScriptGenerated={handleScriptGenerated}
             initialConfig={generatorConfig}
           />
@@ -474,17 +429,9 @@ function App() {
           <StyleTrainer
             currentProfile={activeProject.languageProfile}
             samples={activeProject.writingSamples || []}
-            prompts={projectPrompts}
             onUpdateSamples={handleUpdateWritingSamples}
             onUpdateProfile={handleUpdateLanguageProfile}
           />
-        );
-      case 'prompts':
-        return (
-            <PromptEditor 
-                prompts={projectPrompts}
-                onSave={handleUpdatePrompts}
-            />
         );
       case 'profile':
         return (
@@ -497,7 +444,7 @@ function App() {
       case 'dashboard':
       default:
         return (
-          <div className="p-8 max-w-6xl mx-auto space-y-8">
+          <div className="p-8 max-w-6xl mx-auto space-y-8 animate-in fade-in duration-500">
             <header className="flex justify-between items-center">
               <div>
                 <div className="flex items-center gap-2 mb-1">
@@ -522,7 +469,6 @@ function App() {
             </header>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {/* Stats Card */}
               <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
                 <h3 className="text-sm font-medium text-slate-500 uppercase mb-2">Стиль проекта</h3>
                 <div className="flex items-center gap-2">
@@ -542,12 +488,11 @@ function App() {
                 )}
               </div>
               
-              {/* Plan Status Card */}
               <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
                 <h3 className="text-sm font-medium text-slate-500 uppercase mb-2">План проекта</h3>
                 <div className="flex items-center gap-2">
                    <span className="font-bold text-3xl text-slate-900">
-                      {activeProject.contentPlan.filter(i => i.status !== PlanStatus.DONE).length}
+                      {activeProject.contentPlan.filter(i => i.status !== PlanStatus.DONE && (!i.metrics || i.metrics.reach === 0)).length}
                    </span>
                    <span className="text-sm text-slate-500">постов запланировано</span>
                 </div>
@@ -556,12 +501,11 @@ function App() {
                 </button>
               </div>
 
-              {/* Analytics Summary */}
               <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
                 <h3 className="text-sm font-medium text-slate-500 uppercase mb-2">Результаты</h3>
                 <div className="flex items-center gap-2">
                    <span className="font-bold text-3xl text-slate-900">
-                      {activeProject.contentPlan.filter(item => item.status === PlanStatus.DONE && item.metrics && (item.metrics.reach > 0 || item.metrics.likes > 0)).length}
+                      {activeProject.contentPlan.filter(i => i.status === PlanStatus.DONE && i.metrics && i.metrics.reach > 0).length}
                    </span>
                    <span className="text-sm text-slate-500">проанализировано</span>
                 </div>
@@ -631,10 +575,18 @@ function App() {
         onCreateProject={handleCreateProject}
         onRenameProject={handleRenameProject}
         onDeleteProject={handleDeleteProject}
+        onOpenGuide={() => setShowGuide(true)}
       >
         {renderContent()}
       </Layout>
       
+      <OnboardingGuide 
+        isOpen={showGuide} 
+        onClose={handleGuideClose}
+        onNavigate={setActiveTab}
+        userName={state.authorProfile?.name.split(' ')[0] || ''} 
+      />
+
       <ScriptModal 
         script={selectedScript} 
         onClose={() => setSelectedScript(null)} 

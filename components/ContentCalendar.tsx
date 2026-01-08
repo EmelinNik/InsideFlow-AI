@@ -1,8 +1,8 @@
 
-import React, { useState } from 'react';
-import { AuthorProfile, ContentPlanItem, ContentStrategy, LanguageProfile, PlanStatus, GeneratedScript, TargetPlatform, ContentGoal, StrategyPreset, PromptKey } from '../types';
-import { generateContentPlan, analyzeCalendarPlan } from '../services/geminiService';
-import { Calendar as CalIcon, RefreshCw, Wand2, Loader2, Plus, Filter, ChevronRight, ChevronLeft, LayoutGrid, List, Check, PieChart, Layers, CalendarRange, Calculator, BrainCircuit, X, Sparkles, AlertCircle } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { AppState, ContentPlanItem, ContentGoal, ContentStrategy, TargetPlatform, PlanStatus, AuthorProfile, PostArchetype, StrategyPreset, LanguageProfile, GeneratedScript, CalendarAnalysis } from '../types';
+import { generateContentPlan, calculatePlanDistribution, analyzeContentCalendar } from '../services/geminiService';
+import { Calendar as CalendarIcon, Plus, Wand2, RefreshCw, BarChart3, ArrowRight, ArrowLeft, Loader2, CheckCircle, FileEdit, AlertCircle, Briefcase, MapPin, Target, Layers, Info, Sparkles, X, Microscope, ChevronRight, Check, LayoutGrid, List } from 'lucide-react';
 import { PlanItemModal } from './PlanItemModal';
 import ReactMarkdown from 'react-markdown';
 
@@ -11,424 +11,474 @@ interface ContentCalendarProps {
   languageProfile: LanguageProfile;
   plan: ContentPlanItem[];
   strategy: ContentStrategy;
-  prompts: Record<string, string>;
   onUpdatePlan: (newPlan: ContentPlanItem[]) => void;
-  onUpdateStrategy: (strategy: ContentStrategy) => void;
+  onUpdateStrategy: (newStrategy: ContentStrategy) => void;
   onGenerateContent: (item: ContentPlanItem) => void;
   onScriptGenerated: (script: GeneratedScript) => void;
 }
-
-// Preset distributions hardcoded for preview (sync with service logic)
-const PRESET_DISTRIBUTIONS = {
-    [StrategyPreset.GROWTH]: {
-        [ContentGoal.AWARENESS]: 0.6,
-        [ContentGoal.TRUST]: 0.3,
-        [ContentGoal.RETENTION]: 0.1,
-        [ContentGoal.CONVERSION]: 0.0
-    },
-    [StrategyPreset.SALES]: {
-        [ContentGoal.AWARENESS]: 0.2,
-        [ContentGoal.TRUST]: 0.3,
-        [ContentGoal.RETENTION]: 0.1,
-        [ContentGoal.CONVERSION]: 0.4
-    },
-    [StrategyPreset.AUTHORITY]: {
-        [ContentGoal.AWARENESS]: 0.2,
-        [ContentGoal.TRUST]: 0.6,
-        [ContentGoal.RETENTION]: 0.2,
-        [ContentGoal.CONVERSION]: 0.0
-    },
-    [StrategyPreset.LAUNCH]: {
-        [ContentGoal.AWARENESS]: 0.3,
-        [ContentGoal.TRUST]: 0.2,
-        [ContentGoal.RETENTION]: 0.2,
-        [ContentGoal.CONVERSION]: 0.3
-    },
-    [StrategyPreset.BALANCED]: {
-        [ContentGoal.AWARENESS]: 0.4,
-        [ContentGoal.TRUST]: 0.3,
-        [ContentGoal.RETENTION]: 0.2,
-        [ContentGoal.CONVERSION]: 0.1
-    }
-};
 
 export const ContentCalendar: React.FC<ContentCalendarProps> = ({
   authorProfile,
   languageProfile,
   plan,
   strategy,
-  prompts,
   onUpdatePlan,
   onUpdateStrategy,
   onGenerateContent,
   onScriptGenerated
 }) => {
-  const [selectedItem, setSelectedItem] = useState<ContentPlanItem | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [currentDate, setCurrentDate] = useState(new Date());
-  const [viewMode, setViewMode] = useState<'week' | 'month'>('week'); 
+  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [viewMode, setViewMode] = useState<'month' | 'week'>('month');
   
-  // AI Audit State
-  const [isAuditing, setIsAuditing] = useState(false);
-  const [auditReport, setAuditReport] = useState<string | null>(null);
+  // Modal State
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedItem, setSelectedItem] = useState<ContentPlanItem | null>(null);
+
+  // Analysis State
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analysisResult, setAnalysisResult] = useState<CalendarAnalysis | null>(null);
+  const [isAnalysisOpen, setIsAnalysisOpen] = useState(false);
+
+  // Initialize dates if missing
+  useEffect(() => {
+    if (!strategy.startDate || !strategy.endDate) {
+       const start = new Date();
+       const end = new Date();
+       end.setDate(end.getDate() + 7);
+       onUpdateStrategy({
+           ...strategy,
+           startDate: start.toISOString().split('T')[0],
+           endDate: end.toISOString().split('T')[0]
+       });
+    }
+  }, []);
+
+  // --- ACTIONS ---
 
   const handleGeneratePlan = async () => {
     setIsGenerating(true);
-    setAuditReport(null); // Clear previous audit
     try {
-      const newItems = await generateContentPlan(
-          authorProfile, 
-          strategy, 
-          new Date(strategy.startDate),
-          prompts[PromptKey.PLAN_GENERATION]
-      );
-      // Merge with existing DONE items to preserve history
-      const doneItems = plan.filter(p => p.status === PlanStatus.DONE);
-      onUpdatePlan([...doneItems, ...newItems]);
+      const newItems = await generateContentPlan(authorProfile, strategy, new Date());
+      const updatedPlan = [...plan, ...newItems].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      onUpdatePlan(updatedPlan);
     } catch (e) {
-      alert("Ошибка при генерации плана");
+      alert("Не удалось сгенерировать план. Попробуйте позже.");
     } finally {
       setIsGenerating(false);
     }
   };
 
-  const handleAuditPlan = async () => {
-      if (plan.length === 0) return;
-      setIsAuditing(true);
-      try {
-          const result = await analyzeCalendarPlan(authorProfile, strategy, plan, prompts[PromptKey.CALENDAR_ANALYSIS]);
-          setAuditReport(result.report);
-      } catch (e) {
-          alert("Ошибка анализа");
-      } finally {
-          setIsAuditing(false);
-      }
+  const handleAnalyzePlan = async () => {
+    if (plan.length === 0) {
+      alert("Календарь пуст. Сначала добавьте или сгенерируйте посты.");
+      return;
+    }
+
+    setIsAnalyzing(true);
+    try {
+      const result = await analyzeContentCalendar(strategy, plan);
+      setAnalysisResult(result);
+    } catch (e) {
+      setAnalysisResult({
+        status: 'normal',
+        report: 'Произошла ошибка при анализе. Попробуйте позже.'
+      });
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
-  const handleUpdateItem = (updated: ContentPlanItem) => {
-    const newPlan = plan.map(p => p.id === updated.id ? updated : p);
+  const handlePlatformToggle = (plat: TargetPlatform) => {
+    const current = strategy.platforms;
+    const isSelected = current.includes(plat);
+    const newPlatforms = isSelected 
+        ? current.filter(p => p !== plat)
+        : [...current, plat];
+    
+    onUpdateStrategy({ ...strategy, platforms: newPlatforms });
+  };
+
+  const handleCreateItem = (dateStr: string) => {
+    const newItem: ContentPlanItem = {
+      id: Date.now().toString(),
+      date: dateStr,
+      topic: "Новая тема",
+      rationale: "Ручное создание",
+      platform: strategy.platforms[0] || TargetPlatform.TELEGRAM,
+      archetype: PostArchetype.SHORT_POST,
+      goal: ContentGoal.AWARENESS,
+      status: PlanStatus.IDEA
+    };
+    onUpdatePlan([...plan, newItem]);
+    setSelectedItem(newItem);
+    setIsModalOpen(true);
+  };
+
+  const handleCreateBundle = (dateStr: string, e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (strategy.platforms.length === 0) {
+          alert("Выберите хотя бы одну платформу в настройках справа.");
+          return;
+      }
+      
+      const newItems = strategy.platforms.map((plat, index) => ({
+        id: Date.now().toString() + index,
+        date: dateStr,
+        topic: "Общая тема дня",
+        rationale: "Пакетное создание",
+        platform: plat,
+        archetype: PostArchetype.SHORT_POST,
+        goal: ContentGoal.AWARENESS,
+        status: PlanStatus.IDEA
+      }));
+
+      onUpdatePlan([...plan, ...newItems]);
+  };
+
+  const handleSaveItem = (updatedItem: ContentPlanItem) => {
+    const newPlan = plan.map(p => p.id === updatedItem.id ? updatedItem : p);
+    if (!plan.find(p => p.id === updatedItem.id)) {
+        newPlan.push(updatedItem);
+    }
     onUpdatePlan(newPlan);
-    setSelectedItem(updated); // Keep selected to show updates
   };
 
   const handleDeleteItem = (id: string) => {
-    onUpdatePlan(plan.filter(p => p.id !== id));
-    setSelectedItem(null);
+      onUpdatePlan(plan.filter(p => p.id !== id));
+      setIsModalOpen(false);
   };
 
-  const handleAddNewItem = (dateOverride?: string) => {
-     const dateToUse = dateOverride || new Date().toISOString().split('T')[0];
-     
-     // Determine platforms to create for
-     // Create for ALL selected platforms in strategy
-     let platformsToCreate = strategy.platforms.length > 0 
-        ? strategy.platforms 
-        : [TargetPlatform.TELEGRAM];
-
-     const newItems: ContentPlanItem[] = platformsToCreate.map((plat, idx) => ({
-         id: Date.now().toString() + idx,
-         date: dateToUse,
-         topic: 'Новая тема',
-         rationale: '',
-         platform: plat,
-         archetype: 'Короткий пост' as any,
-         goal: ContentGoal.AWARENESS,
-         status: PlanStatus.IDEA
-     }));
-
-     onUpdatePlan([...plan, ...newItems]);
-     
-     // Select the first created item
-     if (newItems.length > 0) {
-        setSelectedItem(newItems[0]);
-     }
+  const handleItemClick = (item: ContentPlanItem) => {
+    setSelectedItem(item);
+    setIsModalOpen(true);
   };
-
-  const togglePlatform = (p: TargetPlatform) => {
-      const current = strategy.platforms;
-      const exists = current.includes(p);
-      let newPlatforms;
-      
-      if (exists) {
-          newPlatforms = current.filter(pl => pl !== p);
+  
+  const handleDateNavigate = (direction: 'prev' | 'next') => {
+      const newDate = new Date(selectedDate);
+      if (viewMode === 'month') {
+          newDate.setMonth(newDate.getMonth() + (direction === 'next' ? 1 : -1));
       } else {
-          newPlatforms = [...current, p];
+          newDate.setDate(newDate.getDate() + (direction === 'next' ? 7 : -7));
       }
-      
-      // Prevent empty selection
-      if (newPlatforms.length === 0) return;
-
-      onUpdateStrategy({ ...strategy, platforms: newPlatforms });
+      setSelectedDate(newDate);
   };
 
-  // --- NAVIGATION HELPERS ---
+  // --- HELPERS ---
 
-  const prev = () => {
-      const d = new Date(currentDate);
-      if (viewMode === 'week') d.setDate(d.getDate() - 7);
-      else d.setMonth(d.getMonth() - 1);
-      setCurrentDate(d);
+  const getGoalColor = (goal: ContentGoal) => {
+    switch (goal) {
+      case ContentGoal.AWARENESS: return 'bg-blue-50 text-blue-800 border-blue-100';
+      case ContentGoal.TRUST: return 'bg-purple-50 text-purple-800 border-purple-100';
+      case ContentGoal.RETENTION: return 'bg-amber-50 text-amber-800 border-amber-100';
+      case ContentGoal.CONVERSION: return 'bg-green-50 text-green-800 border-green-100';
+      default: return 'bg-slate-50 text-slate-800';
+    }
   };
 
-  const next = () => {
-      const d = new Date(currentDate);
-      if (viewMode === 'week') d.setDate(d.getDate() + 7);
-      else d.setMonth(d.getMonth() + 1);
-      setCurrentDate(d);
+  const getStatusBadge = (status: PlanStatus) => {
+    switch (status) {
+      case PlanStatus.DONE: return <span className="bg-green-500 text-white text-[8px] px-1 rounded font-bold uppercase">ГОТОВО</span>;
+      case PlanStatus.DRAFT: return <span className="bg-amber-400 text-white text-[8px] px-1 rounded font-bold uppercase">ЧЕРНОВИК</span>;
+      case PlanStatus.IDEA: return <span className="bg-slate-300 text-white text-[8px] px-1 rounded font-bold uppercase">ИДЕЯ</span>;
+      default: return null;
+    }
+  }
+  
+  const getAnalysisStatusColor = (status: CalendarAnalysis['status']) => {
+    switch(status) {
+      case 'good': return 'text-green-600 bg-green-50 border-green-200';
+      case 'normal': return 'text-amber-600 bg-amber-50 border-amber-200';
+      case 'bad': return 'text-red-600 bg-red-50 border-red-200';
+    }
   };
 
-  const jumpToToday = () => {
-      setCurrentDate(new Date());
+  const getAnalysisStatusIcon = (status: CalendarAnalysis['status']) => {
+    switch(status) {
+      case 'good': return <CheckCircle size={18} className="text-green-600"/>;
+      case 'normal': return <AlertCircle size={18} className="text-amber-600"/>;
+      case 'bad': return <AlertCircle size={18} className="text-red-600"/>;
+    }
   };
 
-  // --- DATA PREP ---
+  const { summary: recipe, total: totalPostsPreview } = (() => {
+      if (!strategy.startDate || !strategy.endDate) return { summary: {}, total: 0 };
+      const { goals, totalPosts } = calculatePlanDistribution(strategy);
+      const summary: Record<string, number> = {};
+      goals.forEach(s => { summary[s] = (summary[s] || 0) + 1 });
+      return { summary, total: totalPosts };
+  })();
 
-  // Group by date
-  const groupedPlan: Record<string, ContentPlanItem[]> = {};
-  plan.forEach(item => {
-      if (!groupedPlan[item.date]) groupedPlan[item.date] = [];
-      groupedPlan[item.date].push(item);
+  // Calendar Grid Calculation
+  const daysInMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0).getDate();
+  const firstDayOfMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1).getDay();
+  const offset = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1;
+
+  const calendarDays = Array.from({ length: daysInMonth }, (_, i) => {
+     const date = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), i + 1);
+     const dateStr = date.toISOString().split('T')[0];
+     const items = plan.filter(p => p.date === dateStr);
+     return { day: i + 1, dateStr, items, dateObj: date };
   });
 
-  // Calculate Days Difference
-  const startD = new Date(strategy.startDate);
-  const endD = new Date(strategy.endDate);
-  const diffTime = Math.abs(endD.getTime() - startD.getTime());
-  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1; 
+  // Week View Calculation (Shows 7 days starting from currently selected date normalized to week start)
+  const getWeekDays = () => {
+      // Normalize selectedDate to Monday
+      const dayOfWeek = selectedDate.getDay();
+      const diff = selectedDate.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1); 
+      const startOfWeek = new Date(selectedDate);
+      startOfWeek.setDate(diff);
 
-  // Stats Calculation (Real or Predicted)
-  const totalPosts = plan.length;
-  let displayStats: Record<string, number> = {};
-  let isPredicted = false;
-
-  if (totalPosts > 0) {
-      displayStats = plan.reduce((acc, item) => {
-          const goalKey = item.goal || ContentGoal.AWARENESS;
-          acc[goalKey] = (acc[goalKey] || 0) + 1;
-          return acc;
-      }, {} as Record<string, number>);
-  } else {
-      isPredicted = true;
-      const distribution = PRESET_DISTRIBUTIONS[strategy.preset] || PRESET_DISTRIBUTIONS[StrategyPreset.BALANCED];
-      Object.entries(distribution).forEach(([goal, ratio]) => {
-          // Keep as ratio (0.6, 0.3 etc) or normalized to 100 for display
-          if (ratio > 0) {
-              displayStats[goal] = ratio * 100;
-          }
+      return Array.from({length: 7}, (_, i) => {
+          const d = new Date(startOfWeek);
+          d.setDate(startOfWeek.getDate() + i);
+          const dateStr = d.toISOString().split('T')[0];
+          const items = plan.filter(p => p.date === dateStr);
+          return { day: d.getDate(), dateStr, items, dateObj: d, dayName: ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'][d.getDay()] };
       });
-  }
-
-  const getGoalColor = (goal: string) => {
-      if (goal.includes('Охват')) return 'bg-blue-500';
-      if (goal.includes('Доверие')) return 'bg-indigo-500';
-      if (goal.includes('Продажа')) return 'bg-rose-500';
-      if (goal.includes('Удержание')) return 'bg-emerald-500';
-      return 'bg-slate-400';
   };
 
-  // Get dates for List View (1 Week)
-  const getListViewDates = (start: Date) => {
-      const days = [];
-      const curr = new Date(start);
-      const day = curr.getDay();
-      const diff = curr.getDate() - day + (day === 0 ? -6 : 1); // Adjust to Monday
-      const monday = new Date(curr.setDate(diff));
-      
-      for (let i = 0; i < 7; i++) {
-          const d = new Date(monday);
-          d.setDate(monday.getDate() + i);
-          days.push(d.toISOString().split('T')[0]);
-      }
-      return days;
-  };
-
-  // Get dates for Month View with padding (Fixed 6 rows / 42 days)
-  const getMonthData = (date: Date) => {
-      const year = date.getFullYear();
-      const month = date.getMonth();
-      
-      const firstDayOfMonth = new Date(year, month, 1);
-      const lastDayOfMonth = new Date(year, month + 1, 0);
-      
-      const daysInMonth = lastDayOfMonth.getDate();
-      
-      // 0 = Sun, ... 6 = Sat. We want 0 = Mon.
-      const startDayOfWeek = (firstDayOfMonth.getDay() + 6) % 7; 
-      
-      const days: { date: string, isCurrentMonth: boolean }[] = [];
-      
-      // Previous month padding
-      const prevMonthLastDay = new Date(year, month, 0).getDate();
-      for (let i = startDayOfWeek - 1; i >= 0; i--) {
-          const d = new Date(year, month - 1, prevMonthLastDay - i);
-          const localIso = new Date(d.getTime() - (d.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
-          days.push({ date: localIso, isCurrentMonth: false });
-      }
-      
-      // Current month
-      for (let i = 1; i <= daysInMonth; i++) {
-          const d = new Date(year, month, i);
-          const localIso = new Date(d.getTime() - (d.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
-          days.push({ date: localIso, isCurrentMonth: true });
-      }
-
-      // Next month padding to fill exactly 42 slots (6 rows)
-      const totalSlots = 42;
-      const currentLen = days.length;
-      const needed = totalSlots - currentLen;
-      
-      for (let i = 1; i <= needed; i++) {
-          const d = new Date(year, month + 1, i);
-          const localIso = new Date(d.getTime() - (d.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
-          days.push({ date: localIso, isCurrentMonth: false });
-      }
-
-      return days;
-  };
-
-  const listDays = getListViewDates(currentDate);
-  const monthDays = getMonthData(currentDate);
-  const todayStr = new Date().toISOString().split('T')[0];
-
-  const getPlatformIcon = (p: TargetPlatform) => {
-      return p.substring(0, 2);
-  };
-
-  // Calculations for display
-  const totalTopics = strategy.postsCount || diffDays; // Default to 1 per day if not set
-  const isMultiposting = strategy.generatePerPlatform && strategy.platforms.length > 1;
-  const totalItemsToGenerate = isMultiposting ? totalTopics * strategy.platforms.length : totalTopics;
-
-  // Ensure slider value doesn't exceed days (logic requested: max 1 topic per day)
-  // Actually, user said "max should be 7 for 7 days".
-  const maxTopics = diffDays; 
-  
-  const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-      onUpdateStrategy({ ...strategy, postsCount: parseInt(e.target.value) });
-  };
+  const weekDays = getWeekDays();
+  const monthName = selectedDate.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
+  const weekRangeName = `${weekDays[0].dateObj.toLocaleDateString('ru-RU', {day: 'numeric', month: 'short'})} - ${weekDays[6].dateObj.toLocaleDateString('ru-RU', {day: 'numeric', month: 'short'})}`;
 
   return (
-    <div className="flex h-full flex-col lg:flex-row gap-6 p-4 md:p-6 max-w-[1600px] mx-auto">
-      
-      {/* SIDEBAR: STRATEGY */}
-      <div className="w-full lg:w-80 flex-shrink-0 space-y-4">
-          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-              <h3 className="font-bold text-slate-900 mb-4 flex items-center gap-2">
-                  <Filter size={18} className="text-indigo-600"/> 
-                  Стратегия
-              </h3>
-              
-              <div className="space-y-5">
-                  {/* DATE RANGE */}
+    <div className="max-w-7xl mx-auto p-4 md:p-8 space-y-6 md:space-y-8 relative">
+       
+       <PlanItemModal 
+         isOpen={isModalOpen}
+         onClose={() => setIsModalOpen(false)}
+         item={selectedItem}
+         authorProfile={authorProfile}
+         languageProfile={languageProfile}
+         onSave={handleSaveItem}
+         onDelete={handleDeleteItem}
+         onScriptGenerated={onScriptGenerated}
+       />
+       
+       {/* ANALYSIS SIDEBAR */}
+       <div 
+         className={`fixed inset-y-0 right-0 w-full sm:w-96 bg-white shadow-2xl transform transition-transform duration-300 z-50 border-l border-slate-200 flex flex-col ${isAnalysisOpen ? 'translate-x-0' : 'translate-x-full'}`}
+       >
+         <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+             <div className="flex items-center gap-2">
+                 <Microscope size={20} className="text-indigo-600"/>
+                 <h3 className="font-bold text-slate-900">Анализ сетки</h3>
+             </div>
+             <button onClick={() => setIsAnalysisOpen(false)} className="p-2 hover:bg-slate-200 rounded-full text-slate-400">
+                 <X size={20}/>
+             </button>
+         </div>
+         <div className="flex-1 overflow-y-auto p-6">
+             {isAnalyzing ? (
+                 <div className="h-full flex flex-col items-center justify-center text-slate-500 space-y-4">
+                     <Loader2 size={32} className="animate-spin text-indigo-600"/>
+                     <p className="text-sm">ИИ-редактор проверяет ваш план...</p>
+                 </div>
+             ) : analysisResult ? (
+                 <div className="space-y-6 animate-in fade-in">
+                     <div className={`p-4 rounded-xl border flex items-center gap-3 ${getAnalysisStatusColor(analysisResult.status)}`}>
+                         {getAnalysisStatusIcon(analysisResult.status)}
+                         <div>
+                             <div className="font-bold text-xs uppercase tracking-wider">Вердикт</div>
+                             <div className="text-[10px] opacity-90">
+                                 {analysisResult.status === 'good' ? 'Сетка сбалансирована' : analysisResult.status === 'normal' ? 'Есть замечания' : 'Требует доработки'}
+                             </div>
+                         </div>
+                     </div>
+                     <div className="prose prose-sm prose-slate max-w-none">
+                         <ReactMarkdown>{analysisResult.report}</ReactMarkdown>
+                     </div>
+                 </div>
+             ) : (
+                 <div className="h-full flex flex-col items-center justify-center text-slate-400 text-center p-4">
+                     <Sparkles size={24} className="mb-4 text-slate-300"/>
+                     <p className="text-sm">Нажмите кнопку анализа для проверки плана.</p>
+                 </div>
+             )}
+         </div>
+       </div>
+
+       {/* HEADER & STRATEGY */}
+       <div className="flex flex-col lg:flex-row gap-6 md:gap-8 items-stretch">
+          <div className="flex-1 flex flex-col gap-4">
+             <div className="flex justify-between items-center">
+                 <div className="flex items-center gap-4">
+                    <h2 className="text-xl md:text-2xl font-bold text-slate-900 flex items-center gap-2 capitalize">
+                        <CalendarIcon className="text-indigo-600" size={24} />
+                        {viewMode === 'month' ? monthName : weekRangeName}
+                    </h2>
+                    <div className="flex gap-1">
+                        <button onClick={() => handleDateNavigate('prev')} className="p-1.5 hover:bg-slate-100 rounded-full text-slate-500"><ArrowLeft size={16}/></button>
+                        <button onClick={() => handleDateNavigate('next')} className="p-1.5 hover:bg-slate-100 rounded-full text-slate-500"><ArrowRight size={16}/></button>
+                    </div>
+                 </div>
+                 <div className="flex bg-slate-100 p-1 rounded-lg">
+                    <button 
+                        onClick={() => setViewMode('month')}
+                        className={`px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wide flex items-center gap-2 transition-all ${viewMode === 'month' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                    >
+                        <LayoutGrid size={14}/> Месяц
+                    </button>
+                    <button 
+                        onClick={() => setViewMode('week')}
+                        className={`px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wide flex items-center gap-2 transition-all ${viewMode === 'week' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                    >
+                        <List size={14}/> Неделя
+                    </button>
+                 </div>
+             </div>
+             
+             {/* Recipe Widget */}
+             <div className="bg-white p-4 md:p-5 rounded-xl border border-slate-200 shadow-sm space-y-4">
+                <div>
+                   <div className="flex justify-between items-center mb-4">
+                        <h4 className="text-[11px] font-bold text-slate-700 uppercase flex items-center gap-2">
+                            <Layers size={14} className="text-indigo-600"/> Рецепт ({totalPostsPreview})
+                        </h4>
+                        <span className="text-[10px] text-slate-400 bg-slate-50 px-2 py-1 rounded border border-slate-100">
+                            {strategy.preset.split('(')[0]}
+                        </span>
+                    </div>
+                    <div className="grid grid-cols-4 gap-2">
+                        <div className="bg-blue-50/50 border border-blue-100 p-2 rounded-lg flex flex-col items-center text-center">
+                            <span className="text-lg font-bold text-blue-600">{recipe[ContentGoal.AWARENESS] || 0}</span>
+                            <span className="text-[8px] font-bold text-blue-800 uppercase">Охват</span>
+                        </div>
+                        <div className="bg-purple-50/50 border border-purple-100 p-2 rounded-lg flex flex-col items-center text-center">
+                            <span className="text-lg font-bold text-purple-600">{recipe[ContentGoal.TRUST] || 0}</span>
+                            <span className="text-[8px] font-bold text-purple-800 uppercase">Вес</span>
+                        </div>
+                        <div className="bg-amber-50/50 border border-amber-100 p-2 rounded-lg flex flex-col items-center text-center">
+                            <span className="text-lg font-bold text-amber-600">{recipe[ContentGoal.RETENTION] || 0}</span>
+                            <span className="text-[8px] font-bold text-amber-800 uppercase">Лоял</span>
+                        </div>
+                        <div className={`border p-2 rounded-lg flex flex-col items-center text-center ${recipe[ContentGoal.CONVERSION] ? 'bg-green-50/50 border-green-100' : 'bg-slate-50 border-slate-100 opacity-50'}`}>
+                            <span className={`text-lg font-bold ${recipe[ContentGoal.CONVERSION] ? 'text-green-600' : 'text-slate-400'}`}>{recipe[ContentGoal.CONVERSION] || 0}</span>
+                            <span className={`text-[8px] font-bold uppercase ${recipe[ContentGoal.CONVERSION] ? 'text-green-800' : 'text-slate-500'}`}>Sales</span>
+                        </div>
+                    </div>
+                    
+                    {/* VISUAL CHART */}
+                    {totalPostsPreview > 0 && (
+                        <div className="mt-4 pt-4 border-t border-slate-100">
+                            <div className="h-2.5 w-full flex rounded-full overflow-hidden bg-slate-100">
+                                {recipe[ContentGoal.AWARENESS] > 0 && (
+                                    <div style={{ width: `${(recipe[ContentGoal.AWARENESS] / totalPostsPreview) * 100}%` }} className="h-full bg-blue-500" />
+                                )}
+                                {recipe[ContentGoal.TRUST] > 0 && (
+                                    <div style={{ width: `${(recipe[ContentGoal.TRUST] / totalPostsPreview) * 100}%` }} className="h-full bg-purple-500" />
+                                )}
+                                {recipe[ContentGoal.RETENTION] > 0 && (
+                                    <div style={{ width: `${(recipe[ContentGoal.RETENTION] / totalPostsPreview) * 100}%` }} className="h-full bg-amber-500" />
+                                )}
+                                {recipe[ContentGoal.CONVERSION] > 0 && (
+                                    <div style={{ width: `${(recipe[ContentGoal.CONVERSION] / totalPostsPreview) * 100}%` }} className="h-full bg-green-500" />
+                                )}
+                            </div>
+                            <div className="flex justify-between items-center mt-1.5 text-[9px] text-slate-400 font-medium">
+                                <span>Диаграмма стратегии</span>
+                                <span>100%</span>
+                            </div>
+                        </div>
+                    )}
+                </div>
+             </div>
+
+             {/* AI Editor Inline */}
+             <div className="bg-white p-4 md:p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center min-h-[100px]">
+                {isAnalyzing ? (
+                     <div className="flex flex-col items-center py-4 text-slate-500">
+                         <Loader2 size={24} className="animate-spin text-indigo-600 mb-2"/>
+                         <span className="text-[10px] font-bold uppercase">Ревизия...</span>
+                     </div>
+                ) : analysisResult ? (
+                     <div className={`rounded-lg p-3 border ${getAnalysisStatusColor(analysisResult.status)} cursor-pointer`} onClick={() => setIsAnalysisOpen(true)}>
+                         <div className="flex items-center gap-3">
+                             {getAnalysisStatusIcon(analysisResult.status)}
+                             <div>
+                                 <div className="font-bold text-xs">
+                                     {analysisResult.status === 'good' ? 'План ок!' : 'Есть риск'}
+                                 </div>
+                                 <div className="text-[10px] opacity-90 mt-0.5 line-clamp-1">Нажмите для рекомендаций</div>
+                             </div>
+                             <ChevronRight size={14} className="ml-auto opacity-50"/>
+                         </div>
+                     </div>
+                ) : (
+                     <button
+                        onClick={handleAnalyzePlan}
+                        className="w-full py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-[10px] font-bold uppercase transition-colors flex items-center justify-center gap-2"
+                     >
+                         <Sparkles size={14}/> Проверить сетку
+                     </button>
+                )}
+             </div>
+          </div>
+
+          {/* SETTINGS PANEL */}
+          <div className="w-full lg:w-96">
+              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-4">
+                  <h4 className="text-xs font-bold text-slate-700 uppercase flex items-center gap-2">
+                      <Target size={16} className="text-indigo-600"/>
+                      Настройки
+                  </h4>
+
+                  {/* PLATFORMS */}
                   <div>
-                      <label className="text-[10px] text-slate-400 font-bold block mb-2 uppercase tracking-wider flex items-center gap-1">
-                          <CalendarRange size={12}/> Период стратегии
-                      </label>
-                      <div className="grid grid-cols-2 gap-2">
-                          <div>
-                              <span className="text-[9px] text-slate-400 block mb-0.5">Начало</span>
-                              <input 
-                                  type="date" 
-                                  className="w-full p-2 border border-slate-200 rounded-lg text-xs bg-slate-50 outline-none focus:ring-1 focus:ring-indigo-500"
-                                  value={strategy.startDate}
-                                  onChange={(e) => onUpdateStrategy({ ...strategy, startDate: e.target.value })}
-                              />
-                          </div>
-                          <div>
-                              <span className="text-[9px] text-slate-400 block mb-0.5">Конец</span>
-                              <input 
-                                  type="date" 
-                                  className="w-full p-2 border border-slate-200 rounded-lg text-xs bg-slate-50 outline-none focus:ring-1 focus:ring-indigo-500"
-                                  value={strategy.endDate}
-                                  onChange={(e) => onUpdateStrategy({ ...strategy, endDate: e.target.value })}
-                              />
-                          </div>
+                    <label className="text-[9px] text-slate-400 font-bold block mb-2 uppercase tracking-wider">Соцсети</label>
+                    <div className="flex flex-wrap gap-2">
+                        {Object.values(TargetPlatform).map(p => {
+                            const isSelected = strategy.platforms.includes(p);
+                            return (
+                                <button 
+                                    key={p} 
+                                    onClick={() => handlePlatformToggle(p)}
+                                    className={`text-[10px] px-2 py-1 rounded-md border font-bold uppercase transition-all flex items-center gap-1 ${isSelected ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300'}`}
+                                >
+                                    {p.split(' ')[0]}
+                                    {isSelected && <Check size={10} strokeWidth={3}/>}
+                                </button>
+                            );
+                        })}
+                    </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[9px] text-slate-400 font-bold block mb-1 uppercase tracking-wider">Начало</label>
+                        <input type="date" className="w-full p-2 border border-slate-200 rounded-lg text-xs bg-white text-slate-900" value={strategy.startDate || ''} onChange={(e) => onUpdateStrategy({ ...strategy, startDate: e.target.value })} />
+                      </div>
+                      <div>
+                        <label className="text-[9px] text-slate-400 font-bold block mb-1 uppercase tracking-wider">Конец</label>
+                        <input type="date" className="w-full p-2 border border-slate-200 rounded-lg text-xs bg-white text-slate-900" value={strategy.endDate || ''} onChange={(e) => onUpdateStrategy({ ...strategy, endDate: e.target.value })} />
                       </div>
                   </div>
 
-                  {/* FREQUENCY (UPDATED TO TOTAL COUNT) */}
-                  <div>
-                      <div className="flex justify-between items-center mb-2">
-                          <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1">
-                              <Calculator size={12}/> Количество постов
-                          </label>
-                          <span className="text-[10px] bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded font-bold">
-                              {totalTopics} тем(ы)
-                          </span>
-                      </div>
-                      
-                      <div className="flex items-center gap-3">
-                          <input 
-                            type="range" 
-                            min="1" 
-                            max={maxTopics} 
-                            step="1"
-                            value={Math.min(totalTopics, maxTopics)}
-                            onChange={handleSliderChange}
-                            className="flex-1 h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
-                          />
-                          <span className="text-xs font-bold w-6 text-center">{Math.min(totalTopics, maxTopics)}</span>
-                      </div>
-                      <p className="text-[9px] text-slate-400 mt-1">
-                          Распределить {Math.min(totalTopics, maxTopics)} уникальных тем на {diffDays} дней.
-                      </p>
-                      
-                      {isMultiposting && (
-                          <div className="mt-2 text-[10px] bg-indigo-50/50 p-2 rounded border border-indigo-100 flex items-center gap-2">
-                             <Layers size={12} className="text-indigo-500"/>
-                             <span className="text-slate-600">
-                                 × {strategy.platforms.length} площадок = <strong>{totalItemsToGenerate} постов</strong>
-                             </span>
-                          </div>
-                      )}
-                  </div>
-
-                  <div className="border-t border-slate-100 pt-4">
-                      <label className="text-[10px] text-slate-400 font-bold block mb-2 uppercase tracking-wider">Пресет</label>
-                      <select 
-                        className="w-full p-2 border border-slate-200 rounded-lg text-xs bg-slate-50 outline-none focus:ring-1 focus:ring-indigo-500"
-                        value={strategy.preset}
-                        onChange={(e) => onUpdateStrategy({ ...strategy, preset: e.target.value as any })}
-                      >
-                          <option value="Баланс (Удержание + Охват)">Баланс</option>
-                          <option value="Быстрый рост (Охват)">Быстрый Рост</option>
-                          <option value="Активные продажи (Конверсия)">Продажи</option>
-                          <option value="Личный бренд (Доверие)">Личный Бренд</option>
-                      </select>
-                  </div>
-
-                  {/* PLATFORMS SELECTOR */}
-                  <div>
-                      <label className="text-[10px] text-slate-400 font-bold block mb-2 uppercase tracking-wider">Площадки ({strategy.platforms.length})</label>
-                      <div className="grid grid-cols-2 gap-2">
-                          {Object.values(TargetPlatform).map(p => {
-                              const isActive = strategy.platforms.includes(p);
-                              return (
-                                  <button
-                                    key={p}
-                                    onClick={() => togglePlatform(p)}
-                                    className={`
-                                        text-[10px] px-2 py-1.5 rounded border flex items-center gap-1.5 transition-all
-                                        ${isActive 
-                                            ? 'bg-indigo-50 border-indigo-200 text-indigo-700 font-bold' 
-                                            : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300'
-                                        }
-                                    `}
-                                  >
-                                      <div className={`w-3 h-3 rounded-full border flex items-center justify-center ${isActive ? 'bg-indigo-600 border-indigo-600' : 'border-slate-300'}`}>
-                                          {isActive && <Check size={8} className="text-white"/>}
-                                      </div>
-                                      <span className="truncate">{p.split(' ')[0]}</span>
-                                  </button>
-                              )
-                          })}
-                      </div>
+                  <div className="grid grid-cols-2 gap-2">
+                     <div>
+                        <label className="text-[9px] text-slate-400 font-bold block mb-1 uppercase tracking-wider">Постов в неделю</label>
+                        <input 
+                            type="number" 
+                            min="1"
+                            max="50"
+                            className="w-full p-2 border border-slate-200 rounded-lg text-xs bg-white text-slate-900" 
+                            value={strategy.postsPerWeek} 
+                            onChange={(e) => onUpdateStrategy({ ...strategy, postsPerWeek: parseInt(e.target.value) || 1 })} 
+                        />
+                     </div>
+                     <div>
+                        <label className="text-[9px] text-slate-400 font-bold block mb-1 uppercase tracking-wider">Стратегия</label>
+                        <select value={strategy.preset || StrategyPreset.BALANCED} onChange={(e) => onUpdateStrategy({ ...strategy, preset: e.target.value as StrategyPreset })} className="w-full p-2 border border-slate-200 rounded-lg text-xs bg-white text-slate-900 appearance-none">
+                            {Object.values(StrategyPreset).map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                     </div>
                   </div>
                   
                   {/* TOGGLES */}
-                  <div className="space-y-2 pt-2 border-t border-slate-100">
-                      <div className="flex items-center justify-between p-2">
-                          <span className="text-[10px] font-bold text-slate-500 uppercase">Персонализировать</span>
+                  <div className="space-y-2">
+                      <div className="flex items-center justify-between p-2 bg-slate-50 rounded-lg border border-slate-100">
+                          <span className="text-[10px] font-bold text-slate-500 uppercase">Персонализация под соцсети</span>
                           <div className="relative inline-block w-8 h-4 align-middle select-none transition duration-200 ease-in">
                               <input 
                                   type="checkbox" 
@@ -440,376 +490,150 @@ export const ContentCalendar: React.FC<ContentCalendarProps> = ({
                           </div>
                       </div>
 
-                      <div className="flex items-center justify-between p-2">
+                      <div className="flex items-center justify-between p-2 bg-indigo-50/50 rounded-lg border border-indigo-100">
                           <div className="flex flex-col">
-                            <span className="text-[10px] font-bold text-slate-500 uppercase">Мульти-постинг</span>
-                            <span className="text-[8px] text-slate-400">Генерировать для всех в один день</span>
+                              <span className="text-[10px] font-bold text-indigo-700 uppercase">Пакетная генерация</span>
+                              <span className="text-[8px] text-indigo-400 font-medium">Создавать посты во все сети сразу</span>
                           </div>
                           <div className="relative inline-block w-8 h-4 align-middle select-none transition duration-200 ease-in">
                               <input 
                                   type="checkbox" 
                                   checked={strategy.generatePerPlatform} 
-                                  disabled={strategy.platforms.length < 2}
                                   onChange={(e) => onUpdateStrategy({...strategy, generatePerPlatform: e.target.checked})}
-                                  className="toggle-checkbox absolute block w-4 h-4 rounded-full bg-white border-4 appearance-none cursor-pointer checked:right-0 right-4 checked:border-indigo-600 border-slate-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  className="toggle-checkbox absolute block w-4 h-4 rounded-full bg-white border-4 appearance-none cursor-pointer checked:right-0 right-4 checked:border-indigo-600 border-slate-300"
                               />
-                              <label className={`toggle-label block overflow-hidden h-4 rounded-full bg-slate-300 cursor-pointer checked:bg-indigo-600 ${strategy.platforms.length < 2 ? 'opacity-50' : ''}`}></label>
+                              <label className="toggle-label block overflow-hidden h-4 rounded-full bg-slate-300 cursor-pointer checked:bg-indigo-600"></label>
                           </div>
                       </div>
                   </div>
 
                   <div>
                       <label className="text-[9px] text-slate-400 font-bold block mb-1 uppercase tracking-wider">Фокус плана</label>
-                      <textarea 
-                        value={strategy.weeklyFocus || ""} 
-                        onChange={(e) => onUpdateStrategy({ ...strategy, weeklyFocus: e.target.value })} 
-                        placeholder="Напр: Запуск курса..." 
-                        className="w-full p-2 border border-slate-200 rounded-lg text-xs h-16 resize-none outline-none focus:ring-1 focus:ring-indigo-500 bg-white text-slate-900" 
-                      />
+                      <textarea value={strategy.weeklyFocus || ""} onChange={(e) => onUpdateStrategy({ ...strategy, weeklyFocus: e.target.value })} placeholder="Напр: Запуск курса..." className="w-full p-2 border border-slate-200 rounded-lg text-xs h-16 resize-none outline-none focus:ring-1 focus:ring-indigo-500 bg-white text-slate-900" />
                   </div>
 
-                  <div className="flex flex-col gap-2">
-                    <button 
-                        onClick={handleGeneratePlan}
-                        disabled={isGenerating || strategy.platforms.length === 0}
-                        className="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold text-xs hover:bg-indigo-700 disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-indigo-100 uppercase tracking-wide"
-                    >
-                        {isGenerating ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
-                        Сгенерировать план
-                    </button>
-                    
-                    <button 
-                        onClick={() => handleAddNewItem()}
-                        className="w-full bg-white border border-slate-200 text-slate-600 py-2.5 rounded-xl font-bold text-[10px] hover:bg-slate-50 flex items-center justify-center gap-2 uppercase tracking-wide transition-colors"
-                    >
-                        <Plus size={14} />
-                        Добавить быстрый черновик
-                    </button>
-                  </div>
-              </div>
-          </div>
-
-          {/* VISUAL STATS BREAKDOWN - SEPARATE CARD */}
-          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm relative overflow-hidden">
-              <h3 className="font-bold text-slate-900 mb-4 flex items-center gap-2 text-xs uppercase tracking-wider">
-                  <PieChart size={16} className="text-indigo-600"/> 
-                  Баланс смыслов
-              </h3>
-              
-              {/* PREDICTED OR REAL DISTRIBUTION BAR */}
-              <div className={`h-4 w-full flex rounded-full overflow-hidden bg-slate-100 mb-4 ring-1 ring-slate-100 ${isPredicted ? 'opacity-50' : ''}`}>
-                  {Object.entries(displayStats).map(([goal, val], idx) => {
-                      // If predicted, val is just a ratio or similar (we normalized to ~100 in logic above if using % for predicted)
-                      // If real, val is count. We need percentage of total for width.
-                      const totalForCalc = isPredicted ? 100 : totalPosts;
-                      const width = isPredicted ? val : (val / totalForCalc) * 100;
-                      
-                      return (
-                        <div 
-                            key={idx} 
-                            className={`h-full ${getGoalColor(goal)}`} 
-                            style={{ width: `${width}%` }}
-                            title={`${goal}`}
-                        ></div>
-                      )
-                  })}
-              </div>
-
-              {isPredicted && (
-                  <div className="text-center py-1 mb-2">
-                      <p className="text-[10px] text-slate-400 italic">Примерное распределение для стратегии "{strategy.preset}"</p>
-                  </div>
-              )}
-
-              {/* LIST / LEGEND - Always visible now to act as legend */}
-              <div className="space-y-2">
-                {Object.entries(displayStats).map(([goal, count], idx) => {
-                    const percentage = isPredicted ? Math.round(count) : Math.round((count/totalPosts)*100);
-                    return (
-                        <div key={idx} className="flex items-center justify-between text-xs text-slate-600">
-                            <div className="flex items-center gap-2">
-                                <div className={`w-2 h-2 rounded-full ${getGoalColor(goal)} flex-shrink-0`}></div>
-                                <span className="truncate max-w-[140px]">{goal.split(' ')[0]}</span>
-                            </div>
-                            <span className="font-bold tabular-nums">
-                                {percentage}% 
-                                {!isPredicted && <span className="text-slate-400 font-normal ml-1">({count})</span>}
-                            </span>
-                        </div>
-                    );
-                })}
-              </div>
-          </div>
-
-          {/* AI AUDIT CARD - ALWAYS VISIBLE */}
-          <div className={`bg-white p-5 rounded-xl border shadow-sm relative overflow-hidden group transition-all ${plan.length === 0 ? 'border-slate-200 opacity-80' : 'border-indigo-100'}`}>
-              {plan.length > 0 && <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-indigo-500"></div>}
-              
-              {!auditReport ? (
-                  <div className="text-center">
-                      <h3 className={`font-bold mb-2 flex items-center justify-center gap-2 text-xs uppercase tracking-wider ${plan.length === 0 ? 'text-slate-400' : 'text-slate-900'}`}>
-                          <BrainCircuit size={16} className={plan.length === 0 ? 'text-slate-400' : 'text-purple-600'}/> 
-                          AI Аудит Плана
-                      </h3>
-                      <p className="text-[10px] text-slate-500 mb-3 leading-relaxed">
-                          {plan.length === 0 
-                            ? "Сначала создайте или сгенерируйте план, чтобы AI мог проверить его на ошибки."
-                            : "Проверить баланс тем, логику и соответствие болям вашей ЦА."
-                          }
-                      </p>
-                      <button 
-                          onClick={handleAuditPlan}
-                          disabled={isAuditing || plan.length === 0}
-                          className={`
-                            w-full py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 border
-                            ${plan.length === 0 
-                                ? 'bg-slate-50 text-slate-400 border-slate-200 cursor-not-allowed' 
-                                : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border-indigo-200'
-                            }
-                          `}
-                      >
-                          {isAuditing ? <Loader2 size={12} className="animate-spin"/> : <Sparkles size={12}/>}
-                          {plan.length === 0 ? 'План пуст' : 'Анализировать'}
-                      </button>
-                  </div>
-              ) : (
-                  <div className="animate-in fade-in slide-in-from-bottom-2">
-                      <div className="flex justify-between items-start mb-2">
-                          <h3 className="font-bold text-purple-700 text-xs uppercase tracking-wider flex items-center gap-2">
-                              <Check size={14}/> Анализ готов
-                          </h3>
-                          <button onClick={() => setAuditReport(null)} className="text-slate-400 hover:text-slate-600"><X size={14}/></button>
-                      </div>
-                      <div className="max-h-[200px] overflow-y-auto text-[10px] text-slate-600 leading-relaxed prose prose-sm prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-li:my-0">
-                          <ReactMarkdown>{auditReport}</ReactMarkdown>
-                      </div>
-                  </div>
-              )}
-          </div>
-          
-          <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100 text-xs text-indigo-800">
-              <p className="font-bold mb-1">💡 Подсказка</p>
-              Контент-план генерируется на основе вашего профиля автора. Если темы кажутся нерелевантными, уточните "Боли аудитории" в профиле.
-          </div>
-      </div>
-
-      {/* MAIN: CALENDAR */}
-      <div className="flex-1 flex flex-col h-full bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden min-h-[600px]">
-          {/* Calendar Header */}
-          <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row items-center justify-between bg-slate-50 gap-4">
-              <div className="flex items-center gap-2">
-                 <CalIcon size={20} className="text-slate-500"/>
-                 <h2 className="font-bold text-slate-700">Календарь Публикаций</h2>
-              </div>
-              
-              <div className="flex items-center gap-4 bg-white p-1 rounded-lg border border-slate-200">
-                  <div className="flex items-center gap-1">
-                      <button onClick={prev} className="p-1.5 hover:bg-slate-100 rounded text-slate-500">
-                          <ChevronLeft size={16}/>
-                      </button>
-                      <span className="text-sm font-medium w-36 text-center tabular-nums">
-                          {viewMode === 'week' 
-                            ? `${new Date(listDays[0]).toLocaleDateString('ru-RU', {month: 'short', day: 'numeric'})} - ${new Date(listDays[listDays.length-1]).toLocaleDateString('ru-RU', {month: 'short', day: 'numeric'})}`
-                            : currentDate.toLocaleDateString('ru-RU', {month: 'long', year: 'numeric'})
-                          }
-                      </span>
-                      <button onClick={next} className="p-1.5 hover:bg-slate-100 rounded text-slate-500">
-                          <ChevronRight size={16}/>
-                      </button>
-                  </div>
-                  <div className="h-4 w-px bg-slate-200"></div>
-                  <button onClick={jumpToToday} className="text-xs font-bold text-indigo-600 px-2 hover:bg-indigo-50 rounded py-1">
-                      Сегодня
-                  </button>
-              </div>
-
-              <div className="flex items-center gap-2">
-                  <div className="flex bg-slate-200 p-0.5 rounded-lg">
-                      <button 
-                        onClick={() => setViewMode('week')}
-                        className={`p-1.5 rounded-md transition-all ${viewMode === 'week' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                        title="Список"
-                      >
-                          <List size={16}/>
-                      </button>
-                      <button 
-                        onClick={() => setViewMode('month')}
-                        className={`p-1.5 rounded-md transition-all ${viewMode === 'month' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                        title="Месяц (Сетка)"
-                      >
-                          <LayoutGrid size={16}/>
-                      </button>
-                  </div>
-                  <button onClick={() => handleAddNewItem()} className="ml-2 bg-slate-900 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 hover:bg-slate-700 shadow-md">
-                      <Plus size={14}/> Пост
+                  <button 
+                    onClick={handleGeneratePlan}
+                    disabled={isGenerating || strategy.platforms.length === 0}
+                    className="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold text-xs hover:bg-indigo-700 disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-indigo-100 uppercase tracking-wide"
+                  >
+                      {isGenerating ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
+                      Создать план
                   </button>
               </div>
           </div>
+       </div>
 
-          {/* Calendar Content */}
-          <div className="flex-1 overflow-y-auto bg-slate-50/30 p-4">
-              
-              {/* LIST VIEW (formerly Week View) */}
-              {viewMode === 'week' && (
-                  <div className="flex flex-col min-h-full justify-between gap-4">
-                      {listDays.map(dateStr => {
-                          const date = new Date(dateStr);
-                          const items = groupedPlan[dateStr] || [];
-                          const isToday = todayStr === dateStr;
+       {/* CALENDAR VIEW SWITCH */}
+       {viewMode === 'month' ? (
+           <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+               <div className="overflow-x-auto">
+                   <div className="min-w-[800px] md:min-w-full">
+                       <div className="grid grid-cols-7 border-b border-slate-200 bg-slate-50">
+                           {['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map(day => (
+                               <div key={day} className="p-3 text-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                                   {day}
+                               </div>
+                           ))}
+                       </div>
+                       <div className="grid grid-cols-7 auto-rows-fr min-h-[400px] bg-slate-200 gap-px">
+                           {Array.from({ length: offset }).map((_, i) => (
+                               <div key={`offset-${i}`} className="bg-slate-50/30"></div>
+                           ))}
+                           {calendarDays.map(({ day, dateStr, items }) => (
+                               <div 
+                                 key={dateStr} 
+                                 onClick={() => handleCreateItem(dateStr)}
+                                 className="bg-white min-h-[120px] p-1.5 md:p-2 hover:bg-slate-50 transition-colors flex flex-col gap-1.5 relative group cursor-pointer"
+                               >
+                                   <div className="flex justify-between items-start">
+                                        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <button 
+                                                title="Создать пакет" 
+                                                onClick={(e) => handleCreateBundle(dateStr, e)}
+                                                className="p-1 bg-indigo-50 text-indigo-600 rounded hover:bg-indigo-600 hover:text-white transition-colors"
+                                            >
+                                                <Layers size={12}/>
+                                            </button>
+                                        </div>
+                                        <span className="text-[10px] font-bold text-slate-300 absolute top-1 right-2 group-hover:text-indigo-600">{day}</span>
+                                   </div>
 
-                          return (
-                              <div key={dateStr} className={`flex-1 flex flex-col md:flex-row gap-4 ${isToday ? 'bg-indigo-50/40 -mx-4 px-4 py-3 border-y border-indigo-100 rounded-lg' : ''}`}>
-                                  {/* Date Column */}
-                                  <div className="w-full md:w-32 flex-shrink-0 pt-2 flex md:flex-col items-center md:items-start gap-2 md:gap-0">
-                                      <span className={`text-xs font-bold uppercase tracking-wider ${isToday ? 'text-indigo-600' : 'text-slate-400'}`}>
-                                          {date.toLocaleDateString('ru-RU', { weekday: 'short' })}
-                                      </span>
-                                      <div className={`text-2xl font-light ${isToday ? 'text-indigo-900' : 'text-slate-800'}`}>
-                                          {date.getDate()}
-                                          {isToday && <span className="ml-2 text-[10px] bg-indigo-600 text-white px-1.5 py-0.5 rounded align-middle font-bold tracking-wide">СЕГОДНЯ</span>}
+                                   {items.length === 0 && (
+                                      <div className="flex-1 flex items-center justify-center opacity-0 group-hover:opacity-100">
+                                          <Plus size={16} className="text-slate-200" />
                                       </div>
-                                  </div>
-
-                                  {/* Items Column */}
-                                  <div className="flex-1 flex flex-col space-y-3 pb-4 md:pb-0 border-b md:border-b-0 border-slate-100 last:border-0">
-                                      {items.length === 0 ? (
-                                          <div 
-                                            onClick={() => handleAddNewItem(dateStr)}
-                                            className="flex-1 min-h-[100px] border-2 border-dashed border-slate-200 rounded-xl flex flex-col items-center justify-center text-sm text-slate-400 cursor-pointer hover:border-indigo-300 hover:text-indigo-600 hover:bg-indigo-50/30 transition-all gap-2"
-                                          >
-                                              <Plus size={20} /> 
-                                              <span className="font-medium">Добавить план</span>
-                                          </div>
-                                      ) : (
-                                          items.map(item => (
-                                              <div 
-                                                key={item.id}
-                                                onClick={() => setSelectedItem(item)}
-                                                className={`
-                                                    group relative bg-white p-4 rounded-xl border transition-all cursor-pointer hover:shadow-md
-                                                    ${item.status === PlanStatus.DONE 
-                                                        ? 'border-green-200 bg-green-50/30' 
-                                                        : item.status === PlanStatus.DRAFT 
-                                                            ? 'border-amber-200 bg-amber-50/30'
-                                                            : 'border-slate-200 hover:border-indigo-300'
-                                                    }
-                                                `}
-                                              >
-                                                  <div className="flex justify-between items-start mb-2">
-                                                      <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${item.status === PlanStatus.DONE ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
-                                                          {item.platform}
-                                                      </span>
-                                                      <div className="flex gap-2 items-center">
-                                                          <div className={`w-2 h-2 rounded-full ${getGoalColor(item.goal)}`} title={item.goal}></div>
-                                                          <span className="text-[10px] text-slate-400">{item.archetype}</span>
-                                                      </div>
-                                                  </div>
-                                                  <h4 className="font-medium text-slate-800 mb-1 group-hover:text-indigo-700 transition-colors">
-                                                      {item.topic}
-                                                  </h4>
-                                                  <p className="text-xs text-slate-500 line-clamp-2">
-                                                      {item.rationale}
-                                                  </p>
-
-                                                  {item.status !== PlanStatus.DONE && (
-                                                    <div className="absolute right-4 bottom-4 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                        <button 
-                                                            onClick={(e) => { e.stopPropagation(); onGenerateContent(item); }}
-                                                            className="bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-lg hover:bg-indigo-700 flex items-center gap-1"
-                                                        >
-                                                            <Wand2 size={12}/> Создать
-                                                        </button>
-                                                    </div>
-                                                  )}
-                                              </div>
-                                          ))
-                                      )}
-                                  </div>
-                              </div>
-                          );
-                      })}
-                  </div>
-              )}
-
-              {/* MONTH VIEW */}
-              {viewMode === 'month' && (
-                  <div className="h-full flex flex-col">
-                      <div className="grid grid-cols-7 mb-2">
-                          {['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map(day => (
-                              <div key={day} className="text-center text-xs font-bold text-slate-400 uppercase">
-                                  {day}
-                              </div>
-                          ))}
+                                   )}
+                                   {items.map(item => (
+                                       <div 
+                                        key={item.id}
+                                        onClick={(e) => { e.stopPropagation(); handleItemClick(item); }}
+                                        className={`p-1.5 rounded-lg border text-[9px] cursor-pointer shadow-sm hover:shadow transition-all ${getGoalColor(item.goal)}`}
+                                       >
+                                           <div className="flex justify-between items-start mb-0.5">
+                                               <span className="font-bold truncate opacity-60">{item.platform.split(' ')[0]}</span>
+                                               {getStatusBadge(item.status)}
+                                           </div>
+                                           <p className="font-bold leading-tight line-clamp-2 text-slate-800">{item.topic}</p>
+                                       </div>
+                                   ))}
+                               </div>
+                           ))}
+                       </div>
+                   </div>
+               </div>
+               <div className="md:hidden p-2 text-center text-[9px] text-slate-400 font-medium uppercase tracking-wider flex items-center justify-center gap-1">
+                   <span>Листайте вправо</span> <ArrowRight size={10}/>
+               </div>
+           </div>
+       ) : (
+           /* WEEK VIEW */
+           <div className="grid grid-cols-1 gap-4">
+              {weekDays.map(({ day, dayName, dateStr, items }) => (
+                  <div key={dateStr} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col md:flex-row">
+                      <div className="bg-slate-50 p-4 w-full md:w-32 border-b md:border-b-0 md:border-r border-slate-100 flex md:flex-col items-center justify-between md:justify-center gap-1">
+                           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{dayName}</span>
+                           <span className="text-2xl font-bold text-slate-900">{day}</span>
+                           <button 
+                                onClick={() => handleCreateItem(dateStr)}
+                                className="md:mt-2 p-1.5 bg-white border border-slate-200 rounded-lg hover:border-indigo-300 hover:text-indigo-600 transition-colors"
+                           >
+                               <Plus size={16} />
+                           </button>
                       </div>
-                      <div className="grid grid-cols-7 auto-rows-fr gap-2 h-full">
-                          {monthDays.map((dayObj, idx) => {
-                              const dateStr = dayObj.date;
-                              const items = groupedPlan[dateStr] || [];
-                              const isToday = todayStr === dateStr;
-                              const dateObj = new Date(dateStr);
-
-                              return (
-                                  <div 
-                                    key={dateStr} 
-                                    onClick={() => handleAddNewItem(dateStr)}
-                                    className={`
-                                        min-h-[100px] rounded-lg border p-2 relative group cursor-pointer transition-all
-                                        ${dayObj.isCurrentMonth ? 'bg-white hover:shadow-md' : 'bg-slate-50/50 hover:bg-slate-50'}
-                                        ${isToday ? 'border-indigo-500 ring-1 ring-indigo-500 bg-indigo-50/20' : 'border-slate-200 hover:border-indigo-300'}
-                                    `}
-                                  >
-                                      <span className={`text-xs font-bold absolute top-2 right-2 ${isToday ? 'text-indigo-600 bg-indigo-100 px-1.5 rounded' : dayObj.isCurrentMonth ? 'text-slate-400' : 'text-slate-300'}`}>
-                                          {dateObj.getDate()}
-                                      </span>
-                                      
-                                      <div className="mt-6 space-y-1">
-                                          {items.map(item => (
-                                              <div 
-                                                key={item.id}
-                                                onClick={(e) => { e.stopPropagation(); setSelectedItem(item); }}
-                                                className={`
-                                                    text-[9px] px-1.5 py-1 rounded truncate border flex items-center gap-1
-                                                    ${item.status === PlanStatus.DONE 
-                                                        ? 'bg-green-50 border-green-100 text-green-700' 
-                                                        : 'bg-slate-50 border-slate-100 text-slate-600 hover:bg-white hover:border-indigo-200'
-                                                    }
-                                                `}
-                                                title={`${item.platform}: ${item.topic}`}
-                                              >
-                                                  <div className={`w-1.5 h-1.5 rounded-full ${getGoalColor(item.goal)} shrink-0`}></div>
-                                                  <span className="font-bold opacity-70">{getPlatformIcon(item.platform)}</span>
-                                                  <span className="truncate">{item.topic}</span>
-                                              </div>
-                                          ))}
-                                          {items.length === 0 && (
-                                              <div className="opacity-0 group-hover:opacity-100 flex justify-center pt-4">
-                                                  <Plus size={16} className="text-slate-300"/>
-                                              </div>
-                                          )}
-                                      </div>
-                                  </div>
-                              );
-                          })}
+                      <div className="flex-1 p-4">
+                          {items.length === 0 ? (
+                              <div className="h-full flex items-center justify-center text-slate-300 text-sm italic min-h-[60px]">
+                                  Нет запланированных постов
+                              </div>
+                          ) : (
+                              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                  {items.map(item => (
+                                       <div 
+                                        key={item.id}
+                                        onClick={(e) => { e.stopPropagation(); handleItemClick(item); }}
+                                        className={`p-3 rounded-xl border text-xs cursor-pointer shadow-sm hover:shadow-md transition-all relative group ${getGoalColor(item.goal)}`}
+                                       >
+                                           <div className="flex justify-between items-start mb-2">
+                                               <span className="font-bold truncate opacity-60 bg-white/50 px-2 py-0.5 rounded">{item.platform}</span>
+                                               {getStatusBadge(item.status)}
+                                           </div>
+                                           <p className="font-bold leading-snug text-slate-800 mb-2">{item.topic}</p>
+                                           <p className="text-[10px] opacity-70 line-clamp-2 mb-2">{item.rationale}</p>
+                                           {item.mediaSuggestion && (
+                                                <div className="flex items-center gap-1 text-[10px] font-bold opacity-60">
+                                                    <Wand2 size={10}/> Есть визуал
+                                                </div>
+                                           )}
+                                       </div>
+                                   ))}
+                              </div>
+                          )}
                       </div>
                   </div>
-              )}
-
-          </div>
-      </div>
-
-      {selectedItem && (
-          <PlanItemModal 
-              item={selectedItem}
-              authorProfile={authorProfile}
-              languageProfile={languageProfile}
-              prompts={prompts}
-              isOpen={!!selectedItem}
-              onClose={() => setSelectedItem(null)}
-              onSave={handleUpdateItem}
-              onDelete={handleDeleteItem}
-              onScriptGenerated={onScriptGenerated}
-          />
-      )}
+              ))}
+           </div>
+       )}
     </div>
   );
 };

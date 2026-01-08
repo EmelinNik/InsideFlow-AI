@@ -1,6 +1,6 @@
 
 import React, { ReactNode } from 'react';
-import { BookOpen, PenTool, User, Zap, LayoutDashboard, LogOut, Calendar, ChevronRight, BarChart3, Terminal } from 'lucide-react';
+import { BookOpen, PenTool, User, Zap, LayoutDashboard, LogOut, Calendar, ChevronRight, BarChart3, HelpCircle } from 'lucide-react';
 import { Project, SubscriptionPlan } from '../types';
 import { ProjectSelector } from './ProjectSelector';
 
@@ -17,6 +17,7 @@ interface LayoutProps {
   onCreateProject: (name: string) => void;
   onRenameProject: (id: string, name: string) => void;
   onDeleteProject: (id: string) => void;
+  onOpenGuide: () => void;
 }
 
 export const Layout: React.FC<LayoutProps> = ({ 
@@ -31,16 +32,16 @@ export const Layout: React.FC<LayoutProps> = ({
   onSelectProject,
   onCreateProject,
   onRenameProject,
-  onDeleteProject
+  onDeleteProject,
+  onOpenGuide
 }) => {
   const navItems = [
     { id: 'dashboard', label: 'Главная', icon: LayoutDashboard },
     { id: 'calendar', label: 'План', icon: Calendar },
     { id: 'create', label: 'Создать', icon: PenTool },
     { id: 'analytics', label: 'Аналитика', icon: BarChart3 },
-    { id: 'style', label: 'Стиль', icon: Zap },
-    { id: 'prompts', label: 'Промпты (Dev)', icon: Terminal },
-    { id: 'profile', label: 'Профиль', icon: User },
+    { id: 'style', label: 'Стиль проекта', icon: Zap },
+    { id: 'profile', label: 'Профиль проекта', icon: User },
   ];
 
   const activeProject = projects.find(p => p.id === currentProjectId);
@@ -102,7 +103,15 @@ export const Layout: React.FC<LayoutProps> = ({
           ))}
         </nav>
         
-        <div className="p-4 border-t border-slate-100 space-y-4">
+        <div className="p-4 border-t border-slate-100 space-y-2">
+          <button
+            onClick={onOpenGuide}
+            className="w-full flex items-center gap-3 px-4 py-2 rounded-lg text-sm font-medium text-slate-500 hover:bg-slate-50 hover:text-indigo-600 transition-colors"
+          >
+            <HelpCircle size={18} />
+            Как это работает?
+          </button>
+
           <button
             onClick={onLogout}
             className="w-full flex items-center gap-3 px-4 py-2 rounded-lg text-sm font-medium text-slate-500 hover:bg-red-50 hover:text-red-600 transition-colors"
@@ -113,7 +122,7 @@ export const Layout: React.FC<LayoutProps> = ({
 
           <div 
             onClick={onOpenPricing}
-            className="bg-slate-50 p-3 rounded-lg border border-slate-100 cursor-pointer hover:border-indigo-200 hover:bg-indigo-50/50 transition-all group"
+            className="bg-slate-50 p-3 rounded-lg border border-slate-100 cursor-pointer hover:border-indigo-200 hover:bg-indigo-50/50 transition-all group mt-2"
           >
             <div className="flex justify-between items-center mb-2">
                 <span className="text-xs text-slate-500 font-medium uppercase">Тариф</span>
@@ -139,9 +148,14 @@ export const Layout: React.FC<LayoutProps> = ({
                 </p>
               </div>
           </div>
-          <button onClick={onOpenPricing} className={`text-[9px] font-bold px-2 py-1 rounded ${getPlanColor(currentPlan)}`}>
-              {getPlanLabel(currentPlan)}
-          </button>
+          <div className="flex gap-2">
+             <button onClick={onOpenGuide} className="p-1.5 text-slate-400">
+                <HelpCircle size={18} />
+             </button>
+             <button onClick={onOpenPricing} className={`text-[9px] font-bold px-2 py-1 rounded ${getPlanColor(currentPlan)}`}>
+                {getPlanLabel(currentPlan)}
+             </button>
+          </div>
       </div>
 
       {/* --- MAIN CONTENT AREA --- */}

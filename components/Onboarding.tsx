@@ -1,35 +1,32 @@
 
 import React, { useState, useEffect } from 'react';
 import { AuthorProfile, NarrativeVoice } from '../types';
-import { ArrowRight, Check, Sparkles, Loader2, Wand2 } from 'lucide-react';
+import { ArrowRight, Check, Sparkles, Loader2, Wand2, X } from 'lucide-react';
 import { suggestAudienceProfile, suggestStyleProfile } from '../services/geminiService';
 
 interface OnboardingProps {
   onComplete: (profile: AuthorProfile) => void;
+  onCancel?: () => void;
 }
 
-export const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
+export const Onboarding: React.FC<OnboardingProps> = ({ onComplete, onCancel }) => {
   const [step, setStep] = useState(1);
   const [formData, setFormData] = useState<Partial<AuthorProfile>>({
     voice: NarrativeVoice.FIRST_PERSON,
   });
   
-  // AI Assist State for Step 2
   const [aiPrompt, setAiPrompt] = useState('');
   const [isAiLoading, setIsAiLoading] = useState(false);
 
-  // Suggestions State for Step 3
   const [styleSuggestions, setStyleSuggestions] = useState<{ tones: string[]; values: string[]; taboos: string[] } | null>(null);
   const [isSuggestionsLoading, setIsSuggestionsLoading] = useState(false);
 
-  // Initialize AI prompt with role when moving to Step 2
   useEffect(() => {
     if (step === 2 && formData.role && !aiPrompt) {
       setAiPrompt(formData.role);
     }
   }, [step, formData.role]);
 
-  // Fetch style suggestions when entering Step 3
   useEffect(() => {
     if (step === 3 && formData.role && formData.audiencePainPoints && !styleSuggestions && !isSuggestionsLoading) {
       const fetchSuggestions = async () => {
@@ -58,7 +55,7 @@ export const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
         ...prev,
         audiencePainPoints: result.painPoints,
         contentGoals: result.goals,
-        targetAudience: prev.targetAudience || "Люди, интересующиеся темой " + aiPrompt // Simple default if AI doesn't return it
+        targetAudience: prev.targetAudience || "Люди, интересующиеся темой " + aiPrompt
       }));
     }
     setIsAiLoading(false);
@@ -67,17 +64,16 @@ export const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
   const finish = () => {
     if (formData.name && formData.role && formData.tone) {
       onComplete(formData as AuthorProfile);
+    } else {
+        alert("Пожалуйста, заполните основные поля: Имя, Роль и Тон.");
     }
   };
 
   const handleSuggestionClick = (category: 'tones' | 'values' | 'taboos', value: string, field: keyof AuthorProfile) => {
-    // Append to form data
     const current = formData[field] || '';
-    // Append with comma if not empty
     const newValue = current ? `${current}, ${value}` : value;
     handleChange(field, newValue);
 
-    // Remove from available suggestions (queue effect) to show the next one
     if (styleSuggestions) {
       setStyleSuggestions({
         ...styleSuggestions,
@@ -94,7 +90,6 @@ export const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
     if (isSuggestionsLoading) return <div className="text-xs text-indigo-400 flex items-center gap-1 animate-pulse"><Sparkles size={12}/> Подбираем варианты...</div>;
     if (!suggestions || suggestions.length === 0) return <div className="text-xs text-slate-400 italic mt-2">Больше вариантов нет</div>;
 
-    // Show only the first 4 items as a "visible pool"
     const visibleSuggestions = suggestions.slice(0, 4);
 
     return (
@@ -113,11 +108,21 @@ export const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
-      <div className="max-w-xl w-full bg-white rounded-2xl shadow-xl overflow-hidden">
+    <div className="fixed inset-0 z-[60] bg-slate-50/90 backdrop-blur-md flex flex-col items-center justify-center p-4">
+      <div className="max-w-xl w-full bg-white rounded-2xl shadow-2xl overflow-hidden relative border border-slate-200">
+        
+        {onCancel && (
+            <button 
+                onClick={onCancel}
+                className="absolute top-4 right-4 text-white/70 hover:text-white z-10 p-1 hover:bg-white/10 rounded-full"
+            >
+                <X size={20}/>
+            </button>
+        )}
+
         <div className="bg-indigo-600 p-6 text-white text-center">
-          <h2 className="text-2xl font-bold">Добро пожаловать в Контент.Редактор</h2>
-          <p className="text-indigo-100 text-sm mt-1">Давайте создадим ваш профиль автора</p>
+          <h2 className="text-2xl font-bold">Настройка ИИ-профиля</h2>
+          <p className="text-indigo-100 text-sm mt-1">Обучите ИИ понимать ваш контекст</p>
         </div>
 
         <div className="p-8">
@@ -136,11 +141,11 @@ export const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
             <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
               <h3 className="text-lg font-semibold text-slate-800">Кто вы?</h3>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Название проекта</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Ваше имя</label>
                 <input
                   type="text"
                   className="w-full border border-slate-300 bg-white text-slate-900 rounded-lg p-3 focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm transition-all"
-                  placeholder="например, Личный блог маркетолога"
+                  placeholder="например, Иван Петров"
                   value={formData.name || ''}
                   onChange={(e) => handleChange('name', e.target.value)}
                 />
@@ -174,21 +179,20 @@ export const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
             <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
               <h3 className="text-lg font-semibold text-slate-800">Аудитория и цели</h3>
               
-              {/* AI Auto-fill Section */}
               <div className="bg-indigo-50 p-4 rounded-lg border border-indigo-100 mb-4">
                 <div className="flex items-center gap-2 mb-2 text-indigo-800 font-medium text-sm">
                   <Sparkles size={16} />
                   <span>AI Помощник</span>
                 </div>
                 <p className="text-xs text-indigo-600 mb-3">
-                  Опишите вашу деятельность или нишу, и ИИ заполнит поля за вас.
+                  Опишите вашу деятельность, и ИИ заполнит поля за вас.
                 </p>
                 <div className="flex gap-2">
                   <input 
                     type="text"
                     value={aiPrompt}
                     onChange={(e) => setAiPrompt(e.target.value)}
-                    placeholder="Например: Обучение крипте для новичков"
+                    placeholder="Например: Психолог для выгоревших IT"
                     className="flex-1 text-sm border border-indigo-200 bg-white text-slate-900 rounded-md px-3 py-2 focus:outline-none focus:border-indigo-400 shadow-sm"
                   />
                   <button 
@@ -197,17 +201,16 @@ export const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
                     className="bg-indigo-600 text-white px-3 py-2 rounded-md text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 transition-colors flex items-center gap-1 shadow-sm"
                   >
                     {isAiLoading ? <Loader2 size={16} className="animate-spin"/> : <Wand2 size={16}/>}
-                    Заполнить
                   </button>
                 </div>
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Целевая Аудитория (ЦА)</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Целевая Аудитория</label>
                 <input
                   type="text"
                   className="w-full border border-slate-300 bg-white text-slate-900 rounded-lg p-3 focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm transition-all"
-                  placeholder="Кто эти люди? (напр: Мамы в декрете, Фрилансеры)"
+                  placeholder="Кто эти люди?"
                   value={formData.targetAudience || ''}
                   onChange={(e) => handleChange('targetAudience', e.target.value)}
                 />
@@ -217,19 +220,9 @@ export const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
                 <label className="block text-sm font-medium text-slate-700 mb-1">Боли аудитории</label>
                 <textarea
                   className="w-full border border-slate-300 bg-white text-slate-900 rounded-lg p-3 focus:ring-2 focus:ring-indigo-500 outline-none h-20 shadow-sm transition-all"
-                  placeholder="Что не дает им спать по ночам?"
+                  placeholder="Что их беспокоит?"
                   value={formData.audiencePainPoints || ''}
                   onChange={(e) => handleChange('audiencePainPoints', e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Ключевые цели контента</label>
-                <input
-                  type="text"
-                  className="w-full border border-slate-300 bg-white text-slate-900 rounded-lg p-3 focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm transition-all"
-                  placeholder="например, Построить доверие, продать курсы"
-                  value={formData.contentGoals || ''}
-                  onChange={(e) => handleChange('contentGoals', e.target.value)}
                 />
               </div>
             </div>
@@ -237,7 +230,7 @@ export const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
 
           {step === 3 && (
             <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
-              <h3 className="text-lg font-semibold text-slate-800">Ограничения стиля</h3>
+              <h3 className="text-lg font-semibold text-slate-800">Стиль и Тон</h3>
               
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Желаемый тон</label>
@@ -245,31 +238,31 @@ export const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
                 <input
                   type="text"
                   className="w-full border border-slate-300 bg-white text-slate-900 rounded-lg p-3 focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm transition-all"
-                  placeholder="например, Профессиональный, Остроумный, Прямой"
+                  placeholder="например, Остроумный, Прямой"
                   value={formData.tone || ''}
                   onChange={(e) => handleChange('tone', e.target.value)}
                 />
               </div>
               
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Ключевые ценности</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Ценности</label>
                 {renderSuggestionChips(styleSuggestions?.values, 'values', 'values')}
                 <input
                   type="text"
                   className="w-full border border-slate-300 bg-white text-slate-900 rounded-lg p-3 focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm transition-all"
-                  placeholder="например, Прозрачность, Трудолюбие"
+                  placeholder="например, Честность, Энергия"
                   value={formData.values || ''}
                   onChange={(e) => handleChange('values', e.target.value)}
                 />
               </div>
               
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Табу (Что НЕ говорить)</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Табу (Стоп-слова)</label>
                 {renderSuggestionChips(styleSuggestions?.taboos, 'taboos', 'taboos')}
                 <input
                   type="text"
                   className="w-full border border-slate-300 bg-white text-slate-900 rounded-lg p-3 focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm transition-all"
-                  placeholder="например, Никакого кликбейта, без жаргона"
+                  placeholder="например, Никакого мата, без политики"
                   value={formData.taboos || ''}
                   onChange={(e) => handleChange('taboos', e.target.value)}
                 />
@@ -299,7 +292,7 @@ export const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
             ) : (
               <button
                 onClick={finish}
-                className="px-6 py-2 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 transition-colors flex items-center gap-2"
+                className="px-6 py-2 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 transition-colors flex items-center gap-2 shadow-lg"
               >
                 Завершить <Check size={16} />
               </button>

@@ -1,48 +1,97 @@
 
 import React, { useState, useEffect } from 'react';
-import { Project, ContentPlanItem, PlanStatus, AuthorProfile, ContentStrategy, TargetPlatform, PlatformBenchmark, DEFAULT_BENCHMARKS, PromptKey } from '../types';
+import { Project, ContentPlanItem, PlanStatus, AuthorProfile, ContentStrategy } from '../types';
 import { analyzeAudienceInsights } from '../services/geminiService';
-import { BarChart3, TrendingUp, Users, MessageSquare, Share2, Eye, BrainCircuit, Loader2, Sparkles, AlertCircle, CheckCircle2, ChevronRight, Calculator, RefreshCw, PenTool, HelpCircle, X, Percent, Heart, Target, Save, Info } from 'lucide-react';
+import { BarChart3, TrendingUp, Users, MessageSquare, Share2, Eye, BrainCircuit, Loader2, Sparkles, AlertCircle, CheckCircle2, ChevronRight, Calculator, RefreshCw, PenTool, HelpCircle, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
 interface AnalyticsProps {
   project: Project;
   authorProfile: AuthorProfile;
   onUpdatePlan: (newPlan: ContentPlanItem[]) => void;
-  onUpdateBenchmarks: (benchmarks: Partial<Record<TargetPlatform, PlatformBenchmark>>) => void;
 }
 
-export const Analytics: React.FC<AnalyticsProps> = ({ project, authorProfile, onUpdatePlan, onUpdateBenchmarks }) => {
+interface MetricCollectorProps {
+    onSave: (metrics: { reach: number; likes: number; reposts: number; comments: number }) => void;
+}
+
+const MetricCollector: React.FC<MetricCollectorProps> = ({ onSave }) => {
+    const [localMetrics, setLocalMetrics] = useState({
+        reach: '',
+        likes: '',
+        reposts: '',
+        comments: ''
+    });
+
+    const handleSave = () => {
+        onSave({
+            reach: parseInt(localMetrics.reach) || 0,
+            likes: parseInt(localMetrics.likes) || 0,
+            reposts: parseInt(localMetrics.reposts) || 0,
+            comments: parseInt(localMetrics.comments) || 0,
+        });
+    };
+
+    return (
+        <div className="mt-2 space-y-2 animate-in fade-in">
+             <div className="grid grid-cols-2 gap-2">
+                <input 
+                    type="number" 
+                    placeholder="👁️ Охват" 
+                    className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs outline-none focus:border-indigo-400 transition-colors"
+                    value={localMetrics.reach}
+                    onChange={(e) => setLocalMetrics(prev => ({...prev, reach: e.target.value}))}
+                />
+                <input 
+                    type="number" 
+                    placeholder="❤️ Лайки" 
+                    className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs outline-none focus:border-indigo-400 transition-colors"
+                    value={localMetrics.likes}
+                    onChange={(e) => setLocalMetrics(prev => ({...prev, likes: e.target.value}))}
+                />
+                <input 
+                    type="number" 
+                    placeholder="📢 Репосты" 
+                    className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs outline-none focus:border-indigo-400 transition-colors"
+                    value={localMetrics.reposts}
+                    onChange={(e) => setLocalMetrics(prev => ({...prev, reposts: e.target.value}))}
+                />
+                <input 
+                    type="number" 
+                    placeholder="💬 Коммент." 
+                    className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs outline-none focus:border-indigo-400 transition-colors"
+                    value={localMetrics.comments}
+                    onChange={(e) => setLocalMetrics(prev => ({...prev, comments: e.target.value}))}
+                />
+             </div>
+             <button 
+                onClick={handleSave}
+                disabled={!localMetrics.reach}
+                className="w-full bg-slate-800 text-white py-2 rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-slate-900 disabled:opacity-50 transition-colors"
+             >
+                 Сохранить метрики
+             </button>
+        </div>
+    );
+};
+
+export const Analytics: React.FC<AnalyticsProps> = ({ project, authorProfile, onUpdatePlan }) => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [aiReport, setAiReport] = useState<string | null>(null);
-  const [showBenchmarksConfig, setShowBenchmarksConfig] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
 
-  // Local state for benchmarks form. Start with project benchmarks or empty structure (not defaults).
-  const [localBenchmarks, setLocalBenchmarks] = useState<Partial<Record<TargetPlatform, PlatformBenchmark>>>(
-      project.benchmarks || {}
-  );
-
-  useEffect(() => {
-      if (project.benchmarks) {
-          setLocalBenchmarks(project.benchmarks);
-      }
-  }, [project.benchmarks]);
-
-  // Analyzed items are DONE items with at least some metrics
-  const analyzedItems = project.contentPlan.filter(item => 
-      item.status === PlanStatus.DONE && item.metrics && (item.metrics.reach > 0 || item.metrics.likes > 0)
-  );
+  // Filter items that are DONE and have at least some metrics filled (e.g. reach > 0)
+  // These valid items are used for dashboard counters (All Time)
+  const validItems = project.contentPlan.filter(item => item.status === PlanStatus.DONE && item.metrics && item.metrics.reach > 0);
   
-  // Pending items are DONE items without metrics
-  const pendingItems = project.contentPlan.filter(item => 
-      item.status === PlanStatus.DONE && (!item.metrics || (item.metrics.reach === 0 && item.metrics.likes === 0))
-  );
+  // Pending items are those that are DONE but have no metrics yet
+  const pendingItems = project.contentPlan.filter(item => item.status === PlanStatus.DONE && (!item.metrics || item.metrics.reach === 0));
 
   // Totals
-  const totalReach = analyzedItems.reduce((acc, curr) => acc + (curr.metrics?.reach || 0), 0);
-  const totalLikes = analyzedItems.reduce((acc, curr) => acc + (curr.metrics?.likes || 0), 0);
-  const totalComments = analyzedItems.reduce((acc, curr) => acc + (curr.metrics?.comments || 0), 0);
-  const totalReposts = analyzedItems.reduce((acc, curr) => acc + (curr.metrics?.reposts || 0), 0);
+  const totalReach = validItems.reduce((acc, curr) => acc + (curr.metrics?.reach || 0), 0);
+  const totalLikes = validItems.reduce((acc, curr) => acc + (curr.metrics?.likes || 0), 0);
+  const totalComments = validItems.reduce((acc, curr) => acc + (curr.metrics?.comments || 0), 0);
+  const totalReposts = validItems.reduce((acc, curr) => acc + (curr.metrics?.reposts || 0), 0);
 
   const avgER = totalReach > 0 
     ? (((totalLikes + totalComments + totalReposts) / totalReach) * 100).toFixed(2)
@@ -51,13 +100,13 @@ export const Analytics: React.FC<AnalyticsProps> = ({ project, authorProfile, on
   const handleRunAiAnalysis = async () => {
     setIsAnalyzing(true);
     try {
-      const report = await analyzeAudienceInsights(
-          authorProfile, 
-          project.strategy, 
-          analyzedItems, 
-          localBenchmarks,
-          project.prompts?.[PromptKey.AUDIENCE_INSIGHTS]
-      );
+      // For AI analysis, limit to last 2 months to save tokens and keep relevance
+      const twoMonthsAgo = new Date();
+      twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
+      
+      const itemsForAi = validItems.filter(item => new Date(item.date) >= twoMonthsAgo);
+      
+      const report = await analyzeAudienceInsights(authorProfile, project.strategy, itemsForAi);
       setAiReport(report);
     } catch (e) {
       alert("Ошибка AI анализа.");
@@ -69,7 +118,6 @@ export const Analytics: React.FC<AnalyticsProps> = ({ project, authorProfile, on
   const handleUpdateStatus = (id: string, metrics: any) => {
       const newPlan = project.contentPlan.map(item => {
           if (item.id === id) {
-              // Status remains DONE, but metrics are updated, effectively moving it to "analyzed" pile
               return { ...item, status: PlanStatus.DONE, metrics };
           }
           return item;
@@ -77,40 +125,8 @@ export const Analytics: React.FC<AnalyticsProps> = ({ project, authorProfile, on
       onUpdatePlan(newPlan);
   };
 
-  const handleBenchmarkChange = (platform: TargetPlatform, field: keyof PlatformBenchmark, value: string) => {
-      const numValue = value === '' ? 0 : parseInt(value);
-      setLocalBenchmarks(prev => ({
-          ...prev,
-          [platform]: {
-              ...(prev[platform] || { reach: 0, likes: 0, comments: 0, reposts: 0 }),
-              [field]: isNaN(numValue) ? 0 : numValue
-          }
-      }));
-  };
-
-  const saveBenchmarks = () => {
-      onUpdateBenchmarks(localBenchmarks);
-      setShowBenchmarksConfig(false);
-  };
-
-  const saveSinglePlatform = (platform: TargetPlatform) => {
-      const updatedBenchmarks = {
-          ...project.benchmarks,
-          [platform]: localBenchmarks[platform]
-      };
-      // Type assertion needed because merging Partial record creates Partial record, 
-      // but if we know it's fine we can cast or let typescript infer correctly as Partial.
-      onUpdateBenchmarks(updatedBenchmarks as Partial<Record<TargetPlatform, PlatformBenchmark>>);
-      alert(`Стандарты для ${platform} сохранены.`);
-  };
-
-  const calculateER = (b: PlatformBenchmark | undefined) => {
-      if (!b || b.reach === 0) return 0;
-      return ((b.likes + b.comments + b.reposts) / b.reach * 100).toFixed(2);
-  };
-
   // --- CHART HELPERS ---
-  const chartData = analyzedItems.slice(-7).map(i => ({
+  const chartData = validItems.slice(-7).map(i => ({
       label: new Date(i.date).toLocaleDateString('ru-RU', {day: 'numeric'}),
       value: i.metrics?.reach || 0
   }));
@@ -131,13 +147,13 @@ export const Analytics: React.FC<AnalyticsProps> = ({ project, authorProfile, on
         
         <div className="flex gap-2">
             <button 
-                onClick={() => setShowBenchmarksConfig(!showBenchmarksConfig)}
-                className={`px-4 py-2.5 rounded-xl font-bold text-sm transition-all border flex items-center gap-2 ${showBenchmarksConfig ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                onClick={() => setShowHelp(!showHelp)}
+                className={`px-4 py-2.5 rounded-xl font-bold text-sm transition-all border flex items-center gap-2 ${showHelp ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
             >
-                <Target size={18} />
-                <span className="hidden md:inline">Настройка KPI / Нормы</span>
+                <HelpCircle size={18} />
+                <span className="hidden md:inline">Как считать метрики?</span>
             </button>
-            {analyzedItems.length > 0 && (
+            {validItems.length > 0 && (
             <button 
                 onClick={handleRunAiAnalysis}
                 disabled={isAnalyzing}
@@ -150,117 +166,79 @@ export const Analytics: React.FC<AnalyticsProps> = ({ project, authorProfile, on
         </div>
       </div>
 
-      {/* BENCHMARKS CONFIG PANEL */}
-      {showBenchmarksConfig && (
+      {/* METRICS GUIDE PANEL */}
+      {showHelp && (
           <div className="bg-white border border-indigo-100 rounded-2xl shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-4 relative z-10">
               <div className="bg-indigo-50 p-4 border-b border-indigo-100 flex justify-between items-center">
                   <h3 className="text-sm font-bold text-indigo-900 uppercase tracking-wider flex items-center gap-2">
-                      <Calculator size={16}/> Ваши Стандарты (KPI)
+                      <Calculator size={16}/> Где искать цифры?
                   </h3>
-                  <button onClick={() => setShowBenchmarksConfig(false)} className="text-indigo-400 hover:text-indigo-700"><X size={18}/></button>
+                  <button onClick={() => setShowHelp(false)} className="text-indigo-400 hover:text-indigo-700"><X size={18}/></button>
               </div>
-              <div className="p-6">
-                <p className="text-xs text-slate-500 mb-6 max-w-2xl leading-relaxed">
-                    Здесь вы можете задать свои личные KPI. Если оставить поля пустыми, ИИ будет просто анализировать динамику (рост/падение). 
-                    Для справки мы показываем средние цифры по рынку, но вводить их необязательно.
-                </p>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                    {Object.values(TargetPlatform).map((platform) => {
-                         const b = localBenchmarks[platform] || { reach: 0, likes: 0, comments: 0, reposts: 0 };
-                         const ref = DEFAULT_BENCHMARKS[platform];
-                         const er = calculateER(b);
-                         
-                         // Check if this specific platform has been edited compared to saved project state
-                         // (Simple check: always show save button for individual control)
-                         
-                         return (
-                            <div key={platform} className="bg-slate-50 rounded-xl border border-slate-200 flex flex-col">
-                                <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-white rounded-t-xl">
-                                    <h4 className="font-bold text-slate-800 text-xs uppercase tracking-wide truncate max-w-[120px]" title={platform}>
-                                        {platform.split(' ')[0]}
-                                    </h4>
-                                    <button 
-                                        onClick={() => saveSinglePlatform(platform)}
-                                        className="text-[10px] bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 text-slate-500 px-2 py-1 rounded border border-slate-200 transition-colors flex items-center gap-1"
-                                    >
-                                        <Save size={10}/> Сохранить
-                                    </button>
-                                </div>
-                                
-                                <div className="p-4 space-y-3">
-                                    {/* INPUTS */}
-                                    <div>
-                                        <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Целевой Охват</label>
-                                        <input 
-                                            type="number" 
-                                            className="w-full text-xs p-2 border border-slate-200 rounded outline-none focus:ring-1 focus:ring-indigo-400 bg-white"
-                                            value={b.reach || ''}
-                                            onChange={(e) => handleBenchmarkChange(platform, 'reach', e.target.value)}
-                                            placeholder="0"
-                                        />
-                                    </div>
-                                    <div className="grid grid-cols-3 gap-2">
-                                        <div>
-                                            <label className="text-[9px] font-bold text-slate-400 uppercase block mb-1">Лайки</label>
-                                            <input type="number" className="w-full text-xs p-2 border border-slate-200 rounded outline-none bg-white" value={b.likes || ''} onChange={(e) => handleBenchmarkChange(platform, 'likes', e.target.value)} placeholder="0" />
-                                        </div>
-                                        <div>
-                                            <label className="text-[9px] font-bold text-slate-400 uppercase block mb-1">Комм.</label>
-                                            <input type="number" className="w-full text-xs p-2 border border-slate-200 rounded outline-none bg-white" value={b.comments || ''} onChange={(e) => handleBenchmarkChange(platform, 'comments', e.target.value)} placeholder="0" />
-                                        </div>
-                                        <div>
-                                            <label className="text-[9px] font-bold text-slate-400 uppercase block mb-1">Репост</label>
-                                            <input type="number" className="w-full text-xs p-2 border border-slate-200 rounded outline-none bg-white" value={b.reposts || ''} onChange={(e) => handleBenchmarkChange(platform, 'reposts', e.target.value)} placeholder="0" />
-                                        </div>
-                                    </div>
-
-                                    {/* YOUR ER */}
-                                    <div className="pt-2 border-t border-slate-200 flex justify-between items-center">
-                                        <span className="text-[10px] text-slate-500 font-bold uppercase">Ваш ER:</span>
-                                        <span className={`text-sm font-bold ${Number(er) > 0 ? 'text-indigo-600' : 'text-slate-300'}`}>{er}%</span>
-                                    </div>
-
-                                    {/* REFERENCE INFO BLOCK */}
-                                    {ref && (
-                                        <div className="mt-2 bg-indigo-50/50 p-2 rounded border border-indigo-100 text-[9px] text-slate-500">
-                                            <div className="font-bold text-indigo-400 uppercase mb-1 flex items-center gap-1">
-                                                <Info size={10}/> Рыночная норма
-                                            </div>
-                                            <div className="flex justify-between mb-0.5">
-                                                <span>Охват:</span> <span>{ref.reach}</span>
-                                            </div>
-                                            <div className="flex justify-between">
-                                                <span>ER:</span> <span>{((ref.likes + ref.comments + ref.reposts) / ref.reach * 100).toFixed(1)}%</span>
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                         );
-                    })}
-                </div>
-
-                <div className="mt-6 flex justify-end">
-                    <button 
-                        onClick={() => setShowBenchmarksConfig(false)}
-                        className="bg-slate-100 text-slate-600 px-6 py-2 rounded-lg text-sm font-bold hover:bg-slate-200"
-                    >
-                        Закрыть
-                    </button>
-                </div>
+              <div className="p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                  <div>
+                      <h4 className="font-bold text-slate-800 mb-2 flex items-center gap-2 text-sm"><span className="bg-blue-500 w-2 h-2 rounded-full"></span>Telegram</h4>
+                      <ul className="text-xs space-y-2 text-slate-600">
+                          <li className="flex justify-between border-b border-slate-50 pb-1">
+                              <span>Охват</span>
+                              <span className="font-medium">Глазик под постом 👁️</span>
+                          </li>
+                          <li className="flex justify-between border-b border-slate-50 pb-1">
+                              <span>Реакции</span>
+                              <span className="font-medium">Сумма всех эмодзи ❤️</span>
+                          </li>
+                      </ul>
+                  </div>
+                  <div>
+                      <h4 className="font-bold text-slate-800 mb-2 flex items-center gap-2 text-sm"><span className="bg-blue-600 w-2 h-2 rounded-full"></span>ВКонтакте</h4>
+                      <ul className="text-xs space-y-2 text-slate-600">
+                          <li className="flex justify-between border-b border-slate-50 pb-1">
+                              <span>Охват</span>
+                              <span className="font-medium">Счетчик в углу поста 👁️</span>
+                          </li>
+                          <li className="flex justify-between border-b border-slate-50 pb-1">
+                              <span>Лайки</span>
+                              <span className="font-medium">Сердечко внизу ❤️</span>
+                          </li>
+                      </ul>
+                  </div>
+                  <div>
+                      <h4 className="font-bold text-slate-800 mb-2 flex items-center gap-2 text-sm"><span className="bg-purple-600 w-2 h-2 rounded-full"></span>Instagram</h4>
+                      <ul className="text-xs space-y-2 text-slate-600">
+                          <li className="flex justify-between border-b border-slate-50 pb-1">
+                              <span>Охват</span>
+                              <span className="font-medium">Статистика (Insights) 📊</span>
+                          </li>
+                          <li className="flex justify-between border-b border-slate-50 pb-1">
+                              <span>Лайки</span>
+                              <span className="font-medium">Сердечко под фото ❤️</span>
+                          </li>
+                      </ul>
+                  </div>
+                  <div>
+                      <h4 className="font-bold text-slate-800 mb-2 flex items-center gap-2 text-sm"><span className="bg-red-600 w-2 h-2 rounded-full"></span>YouTube</h4>
+                      <ul className="text-xs space-y-2 text-slate-600">
+                          <li className="flex justify-between border-b border-slate-50 pb-1">
+                              <span>Охват</span>
+                              <span className="font-medium">Просмотры (Views) ▶️</span>
+                          </li>
+                          <li className="flex justify-between border-b border-slate-50 pb-1">
+                              <span>Лайки</span>
+                              <span className="font-medium">Палец вверх 👍</span>
+                          </li>
+                      </ul>
+                  </div>
               </div>
           </div>
       )}
 
       {/* STATS OVERVIEW */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[
           { label: 'Общий Охват', value: totalReach.toLocaleString(), icon: Eye, color: 'text-blue-600', bg: 'bg-blue-50' },
-          { label: 'Лайки', value: totalLikes.toLocaleString(), icon: Heart, color: 'text-rose-600', bg: 'bg-rose-50' },
-          { label: 'Репосты', value: totalReposts.toLocaleString(), icon: Share2, color: 'text-purple-600', bg: 'bg-purple-50' },
+          { label: 'Лайки', value: totalLikes.toLocaleString(), icon: TrendingUp, color: 'text-rose-600', bg: 'bg-rose-50' },
           { label: 'Комментарии', value: totalComments.toLocaleString(), icon: MessageSquare, color: 'text-indigo-600', bg: 'bg-indigo-50' },
-          { label: 'Вовлеченность (ER)', value: `${avgER}%`, icon: Percent, color: 'text-amber-600', bg: 'bg-amber-50' },
+          { label: 'Вовлеченность (ER)', value: `${avgER}%`, icon: Users, color: 'text-amber-600', bg: 'bg-amber-50' },
         ].map((stat, i) => (
           <div key={i} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
             <div className={`w-10 h-10 ${stat.bg} ${stat.color} rounded-xl flex items-center justify-center mb-3`}>
@@ -273,7 +251,7 @@ export const Analytics: React.FC<AnalyticsProps> = ({ project, authorProfile, on
       </div>
 
       {/* SIMPLE CHART */}
-      {analyzedItems.length > 0 && (
+      {validItems.length > 0 && (
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
               <h3 className="text-sm font-bold text-slate-700 mb-6 uppercase tracking-wider flex items-center gap-2">
                   <TrendingUp size={16} className="text-indigo-600"/>
@@ -375,10 +353,10 @@ export const Analytics: React.FC<AnalyticsProps> = ({ project, authorProfile, on
                             </div>
                             <h3 className="text-xl font-bold text-slate-800 mb-2">Глубокий анализ аудитории</h3>
                             <p className="text-slate-500 max-w-md mx-auto mb-8">
-                                AI проанализирует корреляцию между форматами постов и вовлеченностью, а затем даст рекомендации по улучшению стратегии.
+                                AI проанализирует корреляцию между форматами постов и вовлеченностью за последние 2 месяца и даст рекомендации.
                             </p>
                             
-                            {analyzedItems.length > 0 ? (
+                            {validItems.length > 0 ? (
                                 <button 
                                     onClick={handleRunAiAnalysis}
                                     className="px-8 py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 flex items-center gap-2"
@@ -401,44 +379,3 @@ export const Analytics: React.FC<AnalyticsProps> = ({ project, authorProfile, on
     </div>
   );
 };
-
-// Internal mini-component for data entry
-const MetricCollector: React.FC<{ onSave: (m: any) => void }> = ({ onSave }) => {
-    const [m, setM] = useState({ reach: '', likes: '', comments: '' });
-
-    const handleSave = () => {
-        if (!m.reach) return;
-        onSave({
-            reach: parseInt(m.reach) || 0,
-            likes: parseInt(m.likes) || 0,
-            comments: parseInt(m.comments) || 0,
-            reposts: 0
-        });
-    };
-
-    return (
-        <div className="space-y-2">
-            <div className="grid grid-cols-3 gap-1.5">
-                <div className="flex flex-col gap-1">
-                    <span className="text-[8px] font-bold text-slate-400 uppercase">Охват</span>
-                    <input type="number" className="w-full text-xs p-1.5 border border-slate-200 rounded outline-none focus:ring-1 focus:ring-indigo-400 bg-white text-slate-900" placeholder="1000" value={m.reach} onChange={e => setM({...m, reach: e.target.value})}/>
-                </div>
-                <div className="flex flex-col gap-1">
-                    <span className="text-[8px] font-bold text-slate-400 uppercase">Лайки</span>
-                    <input type="number" className="w-full text-xs p-1.5 border border-slate-200 rounded outline-none focus:ring-1 focus:ring-indigo-400 bg-white text-slate-900" placeholder="50" value={m.likes} onChange={e => setM({...m, likes: e.target.value})}/>
-                </div>
-                <div className="flex flex-col gap-1">
-                    <span className="text-[8px] font-bold text-slate-400 uppercase">Комм.</span>
-                    <input type="number" className="w-full text-xs p-1.5 border border-slate-200 rounded outline-none focus:ring-1 focus:ring-indigo-400 bg-white text-slate-900" placeholder="5" value={m.comments} onChange={e => setM({...m, comments: e.target.value})}/>
-                </div>
-            </div>
-            <button 
-                onClick={handleSave}
-                disabled={!m.reach}
-                className="w-full py-1.5 bg-indigo-50 text-indigo-600 text-[10px] font-bold uppercase rounded hover:bg-indigo-600 hover:text-white transition-all disabled:opacity-30 flex items-center justify-center gap-1"
-            >
-                Сохранить <CheckCircle2 size={10}/>
-            </button>
-        </div>
-    );
-}

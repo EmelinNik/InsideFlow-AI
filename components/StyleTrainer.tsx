@@ -1,13 +1,11 @@
-
 import React, { useState } from 'react';
 import { analyzeWritingStyle, analyzeVisualIdentity, transformIdentityToVisual } from '../services/geminiService';
-import { LanguageProfile, PromptKey } from '../types';
+import { LanguageProfile } from '../types';
 import { Sparkles, Loader2, Quote, AlertCircle, RefreshCw, Plus, Trash2, FileText, Image, Palette, Layout, Wand2, ArrowDown } from 'lucide-react';
 
 interface StyleTrainerProps {
   currentProfile: LanguageProfile | null;
   samples: string[];
-  prompts: Record<string, string>;
   onUpdateSamples: (samples: string[]) => void;
   onUpdateProfile: (profile: LanguageProfile) => void;
 }
@@ -15,7 +13,6 @@ interface StyleTrainerProps {
 export const StyleTrainer: React.FC<StyleTrainerProps> = ({ 
   currentProfile, 
   samples, 
-  prompts,
   onUpdateSamples, 
   onUpdateProfile 
 }) => {
@@ -60,11 +57,7 @@ export const StyleTrainer: React.FC<StyleTrainerProps> = ({
     setError(null);
     try {
       const profileToUpdate = currentProfile?.isAnalyzed ? currentProfile : undefined;
-      const updatedProfile = await analyzeWritingStyle(
-          fullText, 
-          profileToUpdate,
-          prompts[PromptKey.STYLE_ANALYSIS]
-      );
+      const updatedProfile = await analyzeWritingStyle(fullText, profileToUpdate);
       onUpdateProfile(updatedProfile);
     } catch (err) {
       setError("Не удалось проанализировать стиль. Пожалуйста, проверьте API ключ.");

@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
-import { AuthorProfile, NarrativeVoice, ProjectPersona, StrategicAnalysis } from '../types';
-import { UserCircle2, Edit2, Save, X, Sparkles, Wand2, Info, ShoppingBag, Target, ShieldAlert, Heart, Users, ChevronRight, Loader2, ArrowRight, CheckCircle2, RotateCcw, Magnet, Gem, Crown } from 'lucide-react';
+import { AuthorProfile, NarrativeVoice, ProjectPersona, StrategicAnalysis, ProductService } from '../types';
+import { UserCircle2, Edit2, Save, X, Sparkles, Wand2, Info, ShoppingBag, Target, ShieldAlert, Heart, Users, CheckCircle2, RotateCcw, Magnet, Gem, Crown, Loader2 } from 'lucide-react';
 import { analyzeProjectIdentity } from '../services/geminiService';
 
 interface AuthorProfileViewProps {
@@ -47,7 +47,9 @@ export const AuthorProfileView: React.FC<AuthorProfileViewProps> = ({ profile, o
               contentGoals: projectDesc,
               values: products,
               personas: result.personas,
-              strategyAnalysis: result.strategy
+              strategyAnalysis: result.strategy,
+              // Keep existing products if any
+              products: profile.products || []
           });
           
           setScreen('results');
@@ -97,7 +99,7 @@ export const AuthorProfileView: React.FC<AuthorProfileViewProps> = ({ profile, o
           <div className="p-4 md:p-8 max-w-4xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4">
               <header className="text-center space-y-2">
                   <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center text-white mx-auto shadow-lg shadow-indigo-100 mb-4">
-                      <ShoppingBag size={24} />
+                      <Target size={24} />
                   </div>
                   <h1 className="text-3xl font-bold text-slate-900">Профиль проекта</h1>
                   <p className="text-slate-500">Заполните данные, и ИИ создаст стратегическую карту вашего бизнеса</p>
@@ -127,19 +129,20 @@ export const AuthorProfileView: React.FC<AuthorProfileViewProps> = ({ profile, o
                       />
                   </div>
 
-                  {/* Продукты / Услуги */}
+                  {/* Продукты / Услуги (Initial input for analysis) */}
                   <div className="space-y-4">
                       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-2">
                           <label className="text-sm font-bold text-slate-700 uppercase tracking-wider flex items-center gap-2">
                               <ShoppingBag size={18} className="text-indigo-600"/>
-                              Продукты / Услуги
+                              Продукты / Услуги (для анализа)
                           </label>
                           <span className="text-[10px] text-slate-400 font-medium px-2 py-1 bg-slate-50 rounded border border-slate-100">
                               Пример: Курс "Йога с нуля", Индивидуальные сессии
                           </span>
                       </div>
                       <p className="text-xs text-slate-500 leading-relaxed italic">
-                        Что вы продаете? Перечислите основные позиции, тарифы и их ценность.
+                        Что вы продаете? Перечислите основные позиции и их ценность для первоначального анализа.
+                        (Управлять конкретными товарами можно будет в разделе "Товары и услуги").
                       </p>
                       <textarea 
                           className="w-full h-32 p-4 border border-slate-200 bg-slate-50 rounded-2xl text-slate-900 focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all resize-none text-sm leading-relaxed"

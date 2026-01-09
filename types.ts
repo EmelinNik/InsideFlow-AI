@@ -23,14 +23,6 @@ export enum PostArchetype {
   EXPERT = 'Экспертный разбор'
 }
 
-export const PLATFORM_COMPATIBILITY: Record<TargetPlatform, PostArchetype[]> = {
-  [TargetPlatform.YOUTUBE]: [PostArchetype.EXPERT, PostArchetype.STORY, PostArchetype.ERROR_ANALYSIS, PostArchetype.OBSERVATION, PostArchetype.PERSONAL_XP],
-  [TargetPlatform.TELEGRAM]: Object.values(PostArchetype),
-  [TargetPlatform.VK_POST]: [PostArchetype.EXPERT, PostArchetype.SHORT_POST, PostArchetype.STORY, PostArchetype.ERROR_ANALYSIS, PostArchetype.OBSERVATION, PostArchetype.SUMMARY],
-  [TargetPlatform.INSTAGRAM]: [PostArchetype.STORY, PostArchetype.PERSONAL_XP, PostArchetype.DAY_IN_LIFE, PostArchetype.PROVOCATION, PostArchetype.OBSERVATION, PostArchetype.SHORT_ADVICE],
-  [TargetPlatform.THREADS]: [PostArchetype.SHORT_POST, PostArchetype.REFLECTION, PostArchetype.NOTE, PostArchetype.PROVOCATION, PostArchetype.QUESTION, PostArchetype.OBSERVATION]
-};
-
 export enum ContentGoal {
   AWARENESS = 'Охват / Привлечение (40%)',
   TRUST = 'Доверие / Экспертность (30%)',
@@ -77,9 +69,9 @@ export const PLAN_LIMITS = {
 
 export interface MediaSuggestion {
   type: 'photo' | 'ai_image' | 'video';
-  description: string; // Russian TZ
-  aiPrompt?: string; // English Prompt
-  imageUrl?: string; // Generated URL (mock)
+  description: string; 
+  aiPrompt?: string; 
+  imageUrl?: string; 
 }
 
 export interface ProjectPersona {
@@ -96,24 +88,33 @@ export interface StrategicAnalysis {
   brand: string;
 }
 
+export interface ProductService {
+  id: string;
+  name: string;
+  description: string;
+  price?: string;
+}
+
 export interface ContentPlanItem {
   id: string;
   date: string;
+  time?: string;
   topic: string;
   description?: string;
   rationale: string;
-  platform: TargetPlatform;
-  archetype: PostArchetype;
+  platform: string; 
+  archetype: string; 
   goal: ContentGoal;
   status: PlanStatus;
   scriptId?: string;
   mediaSuggestion?: MediaSuggestion;
   generatedContent?: string;
   metrics?: ContentMetrics;
+  productId?: string; // Link to specific product
 }
 
 export interface ContentStrategy {
-  platforms: TargetPlatform[];
+  platforms: string[]; 
   postsPerWeek: number;
   personalizePerPlatform: boolean; 
   generatePerPlatform: boolean;
@@ -143,6 +144,7 @@ export interface AuthorProfile {
   telegramId?: number;
   personas?: ProjectPersona[];
   strategyAnalysis?: StrategicAnalysis;
+  products?: ProductService[];
 }
 
 export interface LanguageProfile {
@@ -163,7 +165,7 @@ export interface LanguageProfile {
 export interface GeneratedScript {
   id: string;
   topic: string;
-  platform: TargetPlatform;
+  platform: string;
   content: string;
   createdAt: string;
 }
@@ -179,6 +181,40 @@ export interface CalendarAnalysis {
   report: string;
 }
 
+export type PromptKey = 'analyze_identity' | 'generate_plan' | 'generate_unit_options' | 'analyze_calendar' | 'generate_visual';
+
+export interface PlatformConfig {
+  id: string;
+  name: string;
+  rules: string;
+  isSystem: boolean;
+}
+
+export interface ArchetypeStep {
+  id: string;
+  description: string;
+  type?: 'text' | 'question'; // Support for interactive flows
+}
+
+export interface ArchetypeConfig {
+  id: string;
+  name: string;
+  structure: ArchetypeStep[];
+  isSystem: boolean;
+}
+
+export interface GenerationProgress {
+  topic: string;
+  description: string;
+  platform: string;
+  archetype: string;
+  status: 'idle' | 'loading' | 'selecting' | 'finished' | 'answering';
+  unitSequence: string[];
+  currentUnitIndex: number;
+  assembledUnits: Record<string, string>;
+  activeQuestion?: string; // If the AI asked something
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -190,6 +226,10 @@ export interface Project {
   scripts: GeneratedScript[];
   contentPlan: ContentPlanItem[];
   strategy: ContentStrategy;
+  customPrompts?: Partial<Record<PromptKey, string>>;
+  platformConfigs: PlatformConfig[];
+  archetypeConfigs: ArchetypeConfig[];
+  generationProgress?: GenerationProgress;
 }
 
 export interface AppState {
@@ -211,3 +251,31 @@ export interface TelegramUser {
   auth_date: number;
   hash: string;
 }
+
+// Added YOUTUBE_FORMATS constant as it was missing and required by Landing.tsx
+export const YOUTUBE_FORMATS = [
+  {
+    id: 'shorts',
+    title: 'Shorts / Reels',
+    desc: 'Динамичные вертикальные ролики до 60 секунд. Максимальное удержание и охват.',
+    iconName: 'Video'
+  },
+  {
+    id: 'expert',
+    title: 'Экспертное видео',
+    desc: 'Глубокий разбор темы, туториалы или интервью. Работа на лояльность и статус.',
+    iconName: 'Zap'
+  },
+  {
+    id: 'story',
+    title: 'Сторителлинг',
+    desc: 'Личные истории с выводами. Идеально для формирования доверия.',
+    iconName: 'Target'
+  },
+  {
+    id: 'error',
+    title: 'Разбор ошибок',
+    desc: 'Анализ провалов или частых заблуждений в нише. Высокая виральность.',
+    iconName: 'AlertTriangle'
+  }
+];

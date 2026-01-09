@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect } from 'react';
-import { AuthorProfile, ContentPlanItem, PostArchetype, TargetPlatform, ContentGoal, MediaSuggestion, PlanStatus, LanguageProfile, GeneratedScript, PLATFORM_COMPATIBILITY, ContentMetrics } from '../types';
+import { AuthorProfile, ContentPlanItem, ContentGoal, PlanStatus, LanguageProfile, GeneratedScript, PlatformConfig, ArchetypeConfig, ContentMetrics } from '../types';
 import { generateMediaSuggestion, translateToEnglish } from '../services/geminiService';
-import { X, Save, Trash2, Wand2, Image, Camera, Video, Loader2, Copy, ChevronLeft, FileText, CheckCircle2, Edit2, BarChart3, TrendingUp, MessageSquare, Share2, Eye, Languages, RefreshCcw, Sparkles, PenTool, ArrowDownCircle, ScanText, Palette } from 'lucide-react';
+import { X, Save, Trash2, Wand2, Image, Loader2, Copy, ChevronLeft, FileText, CheckCircle2, Edit2, BarChart3, Share2, Languages, RefreshCcw, Sparkles, PenTool, Palette, Calendar as CalendarIcon, Clock, Type as TypeIcon, AlignLeft, Archive, CheckCircle, Keyboard, ShoppingBag } from 'lucide-react';
 import { ContentGenerator } from './ContentGenerator';
 import ReactMarkdown from 'react-markdown';
 
@@ -15,6 +15,8 @@ interface PlanItemModalProps {
   onSave: (updatedItem: ContentPlanItem) => void;
   onDelete: (id: string) => void;
   onScriptGenerated: (script: GeneratedScript) => void;
+  platformConfigs?: PlatformConfig[];
+  archetypeConfigs?: ArchetypeConfig[];
 }
 
 type ModalTab = 'main' | 'visuals';
@@ -28,7 +30,9 @@ export const PlanItemModal: React.FC<PlanItemModalProps> = ({
   onClose,
   onSave,
   onDelete,
-  onScriptGenerated
+  onScriptGenerated,
+  platformConfigs = [],
+  archetypeConfigs = []
 }) => {
   const [editedItem, setEditedItem] = useState<ContentPlanItem | null>(null);
   const [activeTab, setActiveTab] = useState<ModalTab>('main');
@@ -55,78 +59,49 @@ export const PlanItemModal: React.FC<PlanItemModalProps> = ({
         setTempVisualDesc(item.mediaSuggestion?.description || '');
         setTempPrompt(item.mediaSuggestion?.aiPrompt || '');
     }
-  }, [item]);
+  }, [item?.id]);
 
   if (!isOpen || !editedItem) return null;
 
   const handleChange = (field: keyof ContentPlanItem, value: any) => {
-    setEditedItem(prev => {
-        if (!prev) return null;
-        let updated = { ...prev, [field]: value };
-        if (field === 'platform') {
-            const allowedArchetypes = PLATFORM_COMPATIBILITY[value as TargetPlatform];
-            if (!allowedArchetypes.includes(updated.archetype)) {
-                updated.archetype = allowedArchetypes[0];
-            }
-        }
-        return updated;
-    });
+    setEditedItem(prev => prev ? { ...prev, [field]: value } : null);
   };
 
   const handleMetricChange = (field: keyof ContentMetrics, value: string) => {
       const numValue = parseInt(value, 10) || 0;
-      setEditedItem(prev => {
-          if (!prev) return null;
-          return {
-              ...prev,
-              metrics: {
-                  reach: prev.metrics?.reach || 0,
-                  likes: prev.metrics?.likes || 0,
-                  reposts: prev.metrics?.reposts || 0,
-                  comments: prev.metrics?.comments || 0,
-                  [field]: numValue
-              }
-          };
-      });
+      setEditedItem(prev => prev ? {
+          ...prev,
+          metrics: { ...prev.metrics!, [field]: numValue }
+      } : null);
   };
 
   const handleDelete = () => {
-      if (confirm("Вы уверены, что хотите удалить этот пост?")) {
-          onDelete(editedItem.id);
-      }
+      if (confirm("Вы уверены, что хотите удалить этот пост?")) onDelete(editedItem.id);
   };
 
-  // --- CONTENT ACTIONS ---
+  const handleArchive = () => {
+      if (!editedItem.generatedContent && !isEditingContent) {
+          if (!confirm("В посте нет текста. Вы уверены, что хотите отправить пустой пост в архив?")) return;
+      }
+      const updated = { ...editedItem, status: PlanStatus.DONE };
+      setEditedItem(updated);
+      onSave(updated);
+  };
 
   const handleStartContentEdit = () => {
       setTempContent(editedItem.generatedContent || '');
       setIsEditingContent(true);
   };
 
-  const handleWriteManually = () => {
-      setTempContent('');
-      setIsEditingContent(true);
-  };
-
   const handleSaveContentEdit = () => {
       const updated = { 
           ...editedItem, 
-          generatedContent: tempContent,
-          // If content is added manually, we can consider it 'done' enough for draft
-          status: editedItem.status === PlanStatus.IDEA ? PlanStatus.DRAFT : editedItem.status
+          generatedContent: tempContent, 
+          status: editedItem.status === PlanStatus.IDEA ? PlanStatus.DRAFT : editedItem.status 
       };
       setEditedItem(updated);
       onSave(updated);
       setIsEditingContent(false);
-  };
-
-  const handleDeleteContent = () => {
-      if (confirm("Удалить сгенерированный текст? Сам пост в календаре останется.")) {
-          const updated = { ...editedItem, generatedContent: undefined, scriptId: undefined, status: PlanStatus.DRAFT };
-          setEditedItem(updated);
-          onSave(updated);
-          setIsEditingContent(false);
-      }
   };
 
   const handleCopyContent = () => {
@@ -138,37 +113,28 @@ export const PlanItemModal: React.FC<PlanItemModalProps> = ({
   };
 
   const handleScriptCreated = (script: GeneratedScript) => {
-      onScriptGenerated(script);
-      const updatedItem = {
-          ...editedItem,
-          status: PlanStatus.DONE,
-          scriptId: script.id,
-          generatedContent: script.content
-      };
+      const updatedItem = { ...editedItem, status: PlanStatus.DRAFT, scriptId: script.id, generatedContent: script.content };
       setEditedItem(updatedItem);
       onSave(updatedItem);
+      onScriptGenerated(script);
       setView('details');
   };
 
   const handleWriteWithAI = () => {
       if (!languageProfile.isAnalyzed) {
-          alert("Сначала обучите стиль во вкладке 'Стиль', чтобы ИИ мог писать вашим голосом.");
+          alert("Обучите стиль во вкладке 'Стиль' перед генерацией.");
           return;
       }
       onSave(editedItem);
       setView('generator');
   };
 
-  // --- VISUAL ACTIONS ---
-
   const handleGenerateMedia = async () => {
     setIsGeneratingMedia(true);
     try {
       const media = await generateMediaSuggestion(editedItem, authorProfile, languageProfile);
       setTempVisualDesc(media.description);
-      // We fill prompt too if AI suggests one, but primarily this updates the description for analytics
       if (media.aiPrompt) setTempPrompt(media.aiPrompt);
-      
       const updated = { ...editedItem, mediaSuggestion: media };
       setEditedItem(updated);
       onSave(updated);
@@ -185,369 +151,232 @@ export const PlanItemModal: React.FC<PlanItemModalProps> = ({
       try {
           const engPrompt = await translateToEnglish(tempVisualDesc);
           setTempPrompt(engPrompt);
-          
-          // Auto-save the prompt to item state but not necessarily strictly "saved" to DB until user actions
-          // But good UX to save progress
-          const updated = { 
-              ...editedItem, 
-              mediaSuggestion: { 
-                  ...editedItem.mediaSuggestion!, 
-                  description: tempVisualDesc,
-                  aiPrompt: engPrompt 
-              } 
-          };
+          const updated = { ...editedItem, mediaSuggestion: { ...editedItem.mediaSuggestion!, description: tempVisualDesc, aiPrompt: engPrompt } };
           setEditedItem(updated);
           onSave(updated);
-      } catch (e) {
-          alert("Ошибка перевода");
-      } finally {
-          setIsTranslating(false);
-      }
+      } catch (e) { alert("Ошибка перевода"); } finally { setIsTranslating(false); }
   };
 
   const handleSimulateImageGeneration = () => {
-      if (!tempPrompt) {
-          alert("Сначала создайте или переведите промпт.");
-          return;
-      }
+      if (!tempPrompt) return;
       setIsSimulatingImage(true);
       setTimeout(() => {
-          const mockUrl = "https://placehold.co/600x600/png?text=AI+Generated+Image";
-          const updated = {
-              ...editedItem,
-              mediaSuggestion: {
-                  ...editedItem.mediaSuggestion!,
-                  imageUrl: mockUrl,
-                  description: tempVisualDesc,
-                  aiPrompt: tempPrompt
-              }
-          };
+          const mockUrl = `https://placehold.co/600x600/png?text=${encodeURIComponent(editedItem.topic.slice(0, 20))}`;
+          const updated = { ...editedItem, mediaSuggestion: { ...editedItem.mediaSuggestion!, imageUrl: mockUrl, description: tempVisualDesc, aiPrompt: tempPrompt } };
           setEditedItem(updated);
           onSave(updated);
           setIsSimulatingImage(false);
-      }, 2000);
+      }, 1500);
   };
 
-  const handleSaveDescriptionOnly = () => {
-      const updated = {
-          ...editedItem,
-          mediaSuggestion: {
-              ...editedItem.mediaSuggestion!,
-              description: tempVisualDesc,
-              type: editedItem.mediaSuggestion?.type || 'ai_image'
-          }
-      };
-      setEditedItem(updated);
-      onSave(updated);
-      alert("Описание сохранено для аналитики.");
-  };
-
-  const modalWidthClass = view === 'generator' ? 'max-w-7xl' : 'max-w-3xl';
-  const allowedArchetypes = PLATFORM_COMPATIBILITY[editedItem.platform] || [];
-  
-  // ER Calculation
+  const modalWidthClass = view === 'generator' ? 'max-w-7xl' : 'max-w-4xl';
   const metrics = editedItem.metrics || { reach: 0, likes: 0, comments: 0, reposts: 0 };
-  const erValue = metrics.reach > 0 
-    ? (((metrics.likes + metrics.comments + metrics.reposts) / metrics.reach) * 100).toFixed(2) 
-    : "0.00";
+  const erValue = metrics.reach > 0 ? (((metrics.likes + metrics.comments + metrics.reposts) / metrics.reach) * 100).toFixed(2) : "0.00";
+
+  const getStatusLabel = (status: PlanStatus) => {
+      switch(status) {
+          case PlanStatus.IDEA: return 'Идея';
+          case PlanStatus.DRAFT: return 'Черновик';
+          case PlanStatus.DONE: return 'Опубликовано';
+          default: return status;
+      }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm transition-opacity" onClick={onClose}/>
-      
-      <div className={`bg-white w-full ${modalWidthClass} max-h-[90vh] rounded-2xl shadow-2xl flex flex-col relative z-10 animate-in fade-in zoom-in-95 duration-200 overflow-hidden transition-all ease-in-out`}>
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity" onClick={onClose}/>
+      <div className={`bg-white w-full ${modalWidthClass} max-h-[92vh] rounded-3xl shadow-2xl flex flex-col relative z-10 animate-in fade-in zoom-in-95 duration-200 overflow-hidden transition-all ease-in-out`}>
         
         {/* HEADER */}
-        <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-          <div className="flex items-center gap-3">
+        <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+          <div className="flex items-center gap-4">
             {view === 'generator' && (
-                <button onClick={() => setView('details')} className="p-1.5 hover:bg-slate-200 rounded-full text-slate-500">
-                    <ChevronLeft size={20} />
-                </button>
+                <button onClick={() => setView('details')} className="p-2 hover:bg-slate-200 rounded-full text-slate-500 transition-colors"><ChevronLeft size={24} /></button>
             )}
             <div>
-                <h2 className="text-xl font-bold text-slate-900">
-                    {view === 'generator' ? 'Написание поста' : editedItem.topic}
-                </h2>
+                <h2 className="text-xl font-black text-slate-900 leading-tight">{view === 'generator' ? 'Режим Режиссёра' : 'Параметры поста'}</h2>
                 <div className="flex items-center gap-2 mt-1">
-                    <span className="text-xs font-medium text-slate-500 bg-white px-2 py-0.5 rounded border border-slate-200">
-                        {new Date(editedItem.date).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', weekday: 'long' })}
-                    </span>
-                    <span className="text-xs font-medium text-slate-500 bg-white px-2 py-0.5 rounded border border-slate-200">
-                        {editedItem.platform}
-                    </span>
+                    <div className="flex items-center gap-1 px-2 py-0.5 bg-white rounded-lg border border-slate-200 text-[10px] font-bold text-slate-500 uppercase">
+                        <CalendarIcon size={12} className="text-indigo-600"/> {new Date(editedItem.date).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}
+                        {editedItem.time && <span className="ml-1 text-slate-900 font-black flex items-center gap-0.5"><Clock size={10}/>{editedItem.time}</span>}
+                    </div>
+                    <div className="flex items-center gap-1 px-2 py-0.5 bg-indigo-50 rounded-lg border border-indigo-100 text-[10px] font-bold text-indigo-700 uppercase"><Share2 size={12}/>{editedItem.platform}</div>
+                    <div className={`flex items-center gap-1 px-2 py-0.5 rounded-lg border text-[10px] font-bold uppercase ${editedItem.status === PlanStatus.DONE ? 'bg-green-50 border-green-200 text-green-700' : 'bg-slate-100 border-slate-200 text-slate-500'}`}>
+                        {editedItem.status === PlanStatus.DONE ? <CheckCircle size={10}/> : <Edit2 size={10}/>}
+                        {getStatusLabel(editedItem.status)}
+                    </div>
                 </div>
             </div>
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-slate-200 rounded-full text-slate-500 transition-colors">
-            <X size={20} />
-          </button>
+          <button onClick={onClose} className="p-2.5 hover:bg-slate-200 rounded-full text-slate-400 transition-colors"><X size={24} /></button>
         </div>
 
-        {/* TABS (Only visible in 'details' view) */}
+        {/* TABS */}
         {view === 'details' && (
-            <div className="flex border-b border-slate-100 bg-white px-6">
-                <button 
-                    onClick={() => setActiveTab('main')}
-                    className={`px-4 py-3 text-sm font-bold uppercase tracking-wider border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'main' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
-                >
-                    <FileText size={16}/> Текст и Настройки
-                </button>
-                <button 
-                    onClick={() => setActiveTab('visuals')}
-                    className={`px-4 py-3 text-sm font-bold uppercase tracking-wider border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'visuals' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
-                >
-                    <Image size={16}/> Визуал
-                </button>
+            <div className="flex border-b border-slate-100 bg-white px-8">
+                <button onClick={() => setActiveTab('main')} className={`px-6 py-4 text-xs font-black uppercase tracking-widest border-b-4 transition-all flex items-center gap-2.5 ${activeTab === 'main' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><FileText size={18}/> Детали</button>
+                <button onClick={() => setActiveTab('visuals')} className={`px-6 py-4 text-xs font-black uppercase tracking-widest border-b-4 transition-all flex items-center gap-2.5 ${activeTab === 'visuals' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><Image size={18}/> Визуал</button>
             </div>
         )}
 
-        <div className="flex-1 overflow-y-auto bg-slate-50/30">
+        <div className="flex-1 overflow-y-auto bg-slate-50/20">
           {view === 'details' ? (
-              <div className="p-6">
-                 {/* --- TAB: MAIN (TEXT + SETTINGS) --- */}
+              <div className="p-8 space-y-8">
                  {activeTab === 'main' && (
-                     <div className="space-y-6">
-                        {/* Settings Grid (Topic, Status, Format, Context) */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                                <label className="text-xs font-bold text-slate-500 uppercase block mb-1">Тема</label>
-                                <input className="w-full p-2.5 border border-slate-300 rounded-lg text-slate-900 bg-white focus:ring-2 focus:ring-indigo-500 outline-none text-sm" value={editedItem.topic} onChange={(e) => handleChange('topic', e.target.value)}/>
+                     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-2">
+                        {/* INPUTS BLOCK */}
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                            <div className="space-y-6">
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><TypeIcon size={14} className="text-indigo-600"/> Тема (Заголовок)</label>
+                                    <input className="w-full p-4 bg-white border border-slate-200 rounded-2xl text-sm font-black text-slate-900 focus:ring-4 focus:ring-indigo-500/10 outline-none" value={editedItem.topic} onChange={(e) => handleChange('topic', e.target.value)}/>
+                                </div>
+                                
+                                {/* PRODUCT SELECTION */}
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><ShoppingBag size={14} className="text-indigo-600"/> Продукт / Услуга</label>
+                                    <select 
+                                        className="w-full p-3 bg-white border border-slate-200 rounded-2xl text-sm font-bold outline-none"
+                                        value={editedItem.productId || ''}
+                                        onChange={(e) => handleChange('productId', e.target.value || undefined)}
+                                    >
+                                        <option value="">-- Без привязки к продукту --</option>
+                                        {authorProfile.products?.map(p => (
+                                            <option key={p.id} value={p.id}>{p.name}</option>
+                                        ))}
+                                    </select>
+                                    <p className="text-[10px] text-slate-400">Выберите продукт, чтобы ИИ учитывал его особенности при генерации текста.</p>
+                                </div>
+
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><AlignLeft size={14} className="text-indigo-600"/> Описание и контекст (Для AI)</label>
+                                    <textarea className="w-full h-32 p-4 bg-white border border-slate-200 rounded-2xl text-sm leading-relaxed text-slate-700 focus:ring-4 focus:ring-indigo-500/10 outline-none resize-none" placeholder="Добавьте факты, ссылки или детали, которые ИИ должен использовать в тексте..." value={editedItem.description || ""} onChange={(e) => handleChange('description', e.target.value)}/>
+                                </div>
                             </div>
-                            <div>
-                                <label className="text-xs font-bold text-slate-500 uppercase block mb-1">Статус</label>
-                                <select className="w-full p-2.5 border border-slate-300 rounded-lg text-slate-900 bg-white text-sm" value={editedItem.status} onChange={(e) => handleChange('status', e.target.value)}>
-                                    <option value={PlanStatus.IDEA}>💡 Идея</option>
-                                    <option value={PlanStatus.DRAFT}>📝 Черновик</option>
-                                    <option value={PlanStatus.DONE}>✅ Опубликовано</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label className="text-xs font-bold text-slate-500 uppercase block mb-1">Формат</label>
-                                <select className="w-full p-2.5 border border-slate-300 rounded-lg text-slate-900 bg-white text-sm" value={editedItem.archetype} onChange={(e) => handleChange('archetype', e.target.value)}>
-                                    {allowedArchetypes.map(a => <option key={a} value={a}>{a}</option>)}
-                                </select>
-                            </div>
-                            <div>
-                                 <label className="text-xs font-bold text-slate-500 uppercase block mb-1">Доп. контекст (для AI)</label>
-                                 <input className="w-full p-2.5 border border-slate-300 rounded-lg text-slate-900 bg-white focus:ring-2 focus:ring-indigo-500 outline-none text-sm" placeholder="Факты, цифры..." value={editedItem.description || ''} onChange={(e) => handleChange('description', e.target.value)}/>
+
+                            <div className="space-y-6 bg-white p-6 rounded-3xl border border-slate-100 shadow-sm">
+                                <div className="space-y-3">
+                                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Статус поста</label>
+                                    <div className="flex bg-slate-100 p-1 rounded-xl">
+                                        {[PlanStatus.IDEA, PlanStatus.DRAFT, PlanStatus.DONE].map(s => (
+                                            <button 
+                                                key={s}
+                                                onClick={() => handleChange('status', s)}
+                                                className={`flex-1 py-2 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${editedItem.status === s ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                                            >
+                                                {getStatusLabel(s)}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="space-y-2">
+                                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><CalendarIcon size={14} className="text-indigo-600"/> Дата</label>
+                                        <input type="date" className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold" value={editedItem.date} onChange={(e) => handleChange('date', e.target.value)}/>
+                                    </div>
+                                    <div className="space-y-2">
+                                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><Clock size={14} className="text-indigo-600"/> Время</label>
+                                        <input type="time" className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold" value={editedItem.time || "10:00"} onChange={(e) => handleChange('time', e.target.value)}/>
+                                    </div>
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Площадка</label>
+                                    <div className="flex flex-wrap gap-2">
+                                        {platformConfigs.map(p => (
+                                            <button key={p.id} onClick={() => handleChange('platform', p.name)} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider border transition-all ${editedItem.platform === p.name ? 'bg-indigo-600 border-indigo-600 text-white shadow-lg shadow-indigo-100' : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'}`}>{p.name}</button>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <div className="space-y-2">
+                                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Цель</label>
+                                        <select className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-[10px] font-bold" value={editedItem.goal} onChange={(e) => handleChange('goal', e.target.value as ContentGoal)}>
+                                            {Object.values(ContentGoal).map(g => <option key={g} value={g}>{g}</option>)}
+                                        </select>
+                                    </div>
+                                    <div className="space-y-2">
+                                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Формат</label>
+                                        <select className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-[10px] font-bold" value={editedItem.archetype} onChange={(e) => handleChange('archetype', e.target.value)}>
+                                            {archetypeConfigs.map(a => <option key={a.id} value={a.name}>{a.name}</option>)}
+                                        </select>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
-                        {/* Text Editor Area */}
-                        <div className={`rounded-xl border shadow-sm transition-all overflow-hidden ${isEditingContent ? 'bg-amber-50 border-amber-300 ring-4 ring-amber-50' : 'bg-white border-slate-200'}`}>
-                            <div className={`p-4 border-b flex justify-between items-center ${isEditingContent ? 'bg-amber-100 border-amber-200' : 'bg-slate-50 border-slate-100'}`}>
-                                <h3 className="font-bold text-slate-700 flex items-center gap-2">
-                                    <FileText size={18} className="text-indigo-600"/> 
-                                    Пост
-                                </h3>
+                        {/* CONTENT PREVIEW */}
+                        <div className={`rounded-3xl border shadow-sm transition-all overflow-hidden ${isEditingContent ? 'bg-amber-50 border-amber-300 ring-8 ring-amber-50' : 'bg-white border-slate-200'}`}>
+                            <div className={`p-5 border-b flex justify-between items-center ${isEditingContent ? 'bg-amber-100 border-amber-200' : 'bg-slate-50 border-slate-100'}`}>
+                                <h3 className="font-black text-slate-700 text-[10px] uppercase tracking-widest flex items-center gap-2"><PenTool size={18} className="text-indigo-600"/> Сценарий поста</h3>
                                 <div className="flex gap-2">
-                                    {!editedItem.generatedContent && !isEditingContent && (
+                                    {!editedItem.generatedContent && !isEditingContent ? (
+                                        <div className="flex gap-2">
+                                            <button onClick={handleStartContentEdit} className="px-4 py-2.5 bg-white border border-slate-200 text-slate-600 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-50 transition-all flex items-center gap-2"><Keyboard size={12}/> Написать самому</button>
+                                            <button onClick={handleWriteWithAI} className="px-5 py-2.5 bg-indigo-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 flex items-center gap-2 group"><Wand2 size={12} className="group-hover:rotate-12 transition-transform"/> Создать с AI</button>
+                                        </div>
+                                    ) : editedItem.generatedContent && !isEditingContent ? (
                                         <>
-                                            <button onClick={handleWriteManually} className="px-3 py-1.5 bg-white border border-slate-200 text-slate-700 rounded-lg text-xs font-bold uppercase hover:bg-slate-50 flex items-center gap-2 transition-colors">
-                                                <PenTool size={12}/> Написать самому
-                                            </button>
-                                            <button onClick={handleWriteWithAI} className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-bold uppercase hover:bg-indigo-700 flex items-center gap-2 transition-colors">
-                                                <Wand2 size={12}/> Создать с AI
-                                            </button>
+                                            <button onClick={handleStartContentEdit} className="p-2 text-slate-400 hover:text-indigo-600 transition-colors"><Edit2 size={18} /></button>
+                                            <button onClick={handleCopyContent} className={`p-2 rounded-lg ${copyFeedback ? 'text-green-600' : 'text-indigo-600'}`}>{copyFeedback ? <CheckCircle2 size={18} /> : <Copy size={18} />}</button>
                                         </>
-                                    )}
-                                    {editedItem.generatedContent && !isEditingContent && (
-                                        <>
-                                            <button onClick={handleStartContentEdit} className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-white rounded transition-colors"><Edit2 size={16} /></button>
-                                            <button onClick={handleCopyContent} className={`text-xs flex items-center gap-1 font-medium transition-colors p-1.5 rounded ${copyFeedback ? 'text-green-600 bg-green-50' : 'text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50'}`}>{copyFeedback ? <CheckCircle2 size={14} /> : <Copy size={14} />}</button>
-                                            <button onClick={handleDeleteContent} className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"><Trash2 size={16} /></button>
-                                        </>
-                                    )}
+                                    ) : null}
                                 </div>
                             </div>
-
-                            {isEditingContent ? (
-                                <div className="p-4 space-y-3">
-                                    <textarea 
-                                        className="w-full h-80 p-4 border border-amber-200 rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-amber-400 outline-none resize-none font-mono text-sm leading-relaxed placeholder:text-slate-300" 
-                                        placeholder="Напишите текст вашего поста здесь..."
-                                        value={tempContent} 
-                                        onChange={(e) => setTempContent(e.target.value)}
-                                        autoFocus
-                                    />
-                                    <div className="flex justify-end gap-2">
-                                        <button onClick={() => setIsEditingContent(false)} className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-200 rounded-lg">Отмена</button>
-                                        <button onClick={handleSaveContentEdit} className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg flex items-center gap-1"><Save size={14} /> Сохранить</button>
+                            <div className="p-8">
+                                {isEditingContent ? (
+                                    <div className="space-y-4">
+                                        <textarea className="w-full h-80 p-5 border border-amber-200 rounded-2xl bg-white text-slate-900 focus:ring-4 focus:ring-amber-200 outline-none resize-none font-sans text-sm leading-relaxed" placeholder="Вставьте ваш готовый пост здесь или начните писать..." value={tempContent} onChange={(e) => setTempContent(e.target.value)} autoFocus/>
+                                        <div className="flex justify-end gap-3"><button onClick={() => setIsEditingContent(false)} className="px-6 py-2.5 text-sm font-bold text-slate-500">Отмена</button><button onClick={handleSaveContentEdit} className="px-6 py-2.5 bg-indigo-600 text-white rounded-2xl text-sm font-black flex items-center gap-2"><Save size={16} /> Сохранить</button></div>
                                     </div>
-                                </div>
-                            ) : (
-                                <div className="p-6 min-h-[150px]">
-                                    {editedItem.generatedContent ? (
-                                        <div className="prose prose-sm prose-slate max-w-none text-slate-800">
-                                            <ReactMarkdown>{editedItem.generatedContent}</ReactMarkdown>
+                                ) : editedItem.generatedContent ? (
+                                    <div className="prose prose-slate max-w-none text-slate-800 prose-headings:font-black prose-p:leading-relaxed"><ReactMarkdown>{editedItem.generatedContent}</ReactMarkdown></div>
+                                ) : (
+                                    <div className="py-12 text-center flex flex-col items-center justify-center space-y-4">
+                                        <div className="text-slate-300 font-black uppercase tracking-widest text-[10px] italic">Текст еще не добавлен</div>
+                                        <div className="flex gap-3">
+                                            <button onClick={handleStartContentEdit} className="px-4 py-2 border-2 border-slate-100 text-slate-400 rounded-xl text-xs font-black uppercase hover:bg-slate-50 transition-colors flex items-center gap-2"><Keyboard size={14}/> Вставить свой текст</button>
+                                            <button onClick={handleWriteWithAI} className="px-4 py-2 border-2 border-indigo-100 text-indigo-600 rounded-xl text-xs font-black uppercase hover:bg-indigo-50 transition-colors flex items-center gap-2"><Wand2 size={14}/> Сгенерировать AI</button>
                                         </div>
-                                    ) : (
-                                        <div className="flex flex-col items-center justify-center h-32 text-slate-400 italic text-sm">
-                                            <FileText size={32} className="mb-2 opacity-20"/>
-                                            Пост пуст. Выберите способ создания выше.
-                                        </div>
-                                    )}
-                                </div>
-                            )}
+                                    </div>
+                                )}
+                            </div>
                         </div>
 
-                        {/* Metrics (Visible only when DONE) */}
+                        {/* METRICS */}
                         {editedItem.status === PlanStatus.DONE && (
-                            <div className="bg-indigo-50 p-5 rounded-xl border border-indigo-100 space-y-4 animate-in fade-in slide-in-from-top-2">
-                                 <div className="flex items-center justify-between">
-                                    <div className="flex items-center gap-2">
-                                        <BarChart3 size={18} className="text-indigo-600"/>
-                                        <h4 className="text-sm font-bold text-indigo-900 uppercase">Метрики поста</h4>
-                                    </div>
-                                    <div className="px-2 py-1 bg-white rounded border border-indigo-200 text-xs font-bold text-indigo-600">
-                                        ER: {erValue}%
-                                    </div>
+                            <div className="bg-white p-8 rounded-3xl border border-slate-100 space-y-6 animate-in slide-in-from-top-4">
+                                 <div className="flex items-center justify-between border-b border-slate-50 pb-4"><div className="flex items-center gap-2"><BarChart3 size={20} className="text-indigo-600"/><h4 className="text-[10px] font-black text-slate-800 uppercase tracking-widest">Аналитика по факту</h4></div><div className="px-3 py-1 bg-green-50 rounded-full border border-green-200 text-[10px] font-black text-green-700 uppercase">ER: {erValue}%</div></div>
+                                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-6">
+                                    {['reach', 'likes', 'reposts', 'comments'].map((f) => (
+                                        <div key={f} className="space-y-1.5"><label className="text-[9px] font-black text-slate-400 block uppercase tracking-widest">{f === 'reach' ? 'Охват 👁️' : f === 'likes' ? 'Лайки ❤️' : f === 'reposts' ? 'Репосты 📢' : 'Коммент 💬'}</label><input type="number" className="w-full p-2.5 text-xs font-black border border-slate-100 rounded-xl outline-none focus:border-indigo-500" value={editedItem.metrics?.[f as keyof ContentMetrics] || ''} placeholder="0" onChange={(e) => handleMetricChange(f as keyof ContentMetrics, e.target.value)}/></div>
+                                    ))}
                                  </div>
-                                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                                    <div>
-                                        <label className="text-[10px] font-bold text-indigo-400 block mb-1 uppercase tracking-wider flex items-center gap-1"><Eye size={12}/> Охват</label>
-                                        <input type="number" className="w-full p-2 text-sm border border-indigo-200 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-400" value={editedItem.metrics?.reach || ''} placeholder="0" onChange={(e) => handleMetricChange('reach', e.target.value)}/>
-                                    </div>
-                                    <div>
-                                        <label className="text-[10px] font-bold text-indigo-400 block mb-1 uppercase tracking-wider flex items-center gap-1"><TrendingUp size={12}/> Лайки</label>
-                                        <input type="number" className="w-full p-2 text-sm border border-indigo-200 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-400" value={editedItem.metrics?.likes || ''} placeholder="0" onChange={(e) => handleMetricChange('likes', e.target.value)}/>
-                                    </div>
-                                    <div>
-                                        <label className="text-[10px] font-bold text-indigo-400 block mb-1 uppercase tracking-wider flex items-center gap-1"><Share2 size={12}/> Репосты</label>
-                                        <input type="number" className="w-full p-2 text-sm border border-indigo-200 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-400" value={editedItem.metrics?.reposts || ''} placeholder="0" onChange={(e) => handleMetricChange('reposts', e.target.value)}/>
-                                    </div>
-                                    <div>
-                                        <label className="text-[10px] font-bold text-indigo-400 block mb-1 uppercase tracking-wider flex items-center gap-1"><MessageSquare size={12}/> Комм.</label>
-                                        <input type="number" className="w-full p-2 text-sm border border-indigo-200 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-400" value={editedItem.metrics?.comments || ''} placeholder="0" onChange={(e) => handleMetricChange('comments', e.target.value)}/>
-                                    </div>
-                                 </div>
-                                 <p className="text-[10px] text-indigo-400 italic text-center">
-                                     Вносите данные спустя 24-48 часов после публикации для точности аналитики.
-                                 </p>
                             </div>
                         )}
                      </div>
                  )}
 
-                 {/* --- TAB: VISUALS --- */}
                  {activeTab === 'visuals' && (
-                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 h-full">
-                         
-                         {/* LEFT: SETTINGS (Separated logic) */}
+                     <div className="grid grid-cols-1 md:grid-cols-2 gap-8 h-full animate-in fade-in">
                          <div className="space-y-6">
-                             
-                             {/* SECTION 1: VISUAL DESCRIPTION (ANALYTICS) */}
-                             <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-3 relative group">
-                                 <div className="flex items-center justify-between mb-1">
-                                     <label className="text-xs font-bold text-slate-700 uppercase tracking-wide flex items-center gap-2">
-                                         <ScanText size={16} className="text-indigo-600"/> Описание визуала
-                                     </label>
-                                     {editedItem.generatedContent && (
-                                         <button 
-                                            onClick={handleGenerateMedia} 
-                                            disabled={isGeneratingMedia}
-                                            className="text-[10px] font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-2 py-1.5 rounded transition-colors flex items-center gap-1"
-                                            title="AI проанализирует текст поста и составит описание"
-                                         >
-                                             {isGeneratingMedia ? <Loader2 size={12} className="animate-spin"/> : <Sparkles size={12}/>} Авто-описание из поста
-                                         </button>
-                                     )}
-                                 </div>
-                                 
-                                 <p className="text-[10px] text-slate-400 leading-relaxed">
-                                     Опишите, что изображено на картинке. Это используется для AI-аналитики эффективности (например: "посты с котами набирают больше лайков").
-                                 </p>
-
-                                 <textarea 
-                                     className="w-full h-28 p-3 border border-slate-200 rounded-lg text-slate-900 bg-slate-50 focus:ring-2 focus:ring-indigo-500 outline-none text-sm resize-none"
-                                     placeholder={isGeneratingMedia ? "Анализирую текст..." : "Например: Яркое фото девушки с ноутбуком в кофейне..."}
-                                     value={tempVisualDesc}
-                                     onChange={(e) => setTempVisualDesc(e.target.value)}
-                                 />
-                                 
-                                 <div className="flex justify-end">
-                                     <button 
-                                        onClick={handleSaveDescriptionOnly}
-                                        className="text-xs font-bold bg-slate-800 text-white px-4 py-2 rounded-lg hover:bg-slate-900 transition-colors flex items-center gap-2"
-                                     >
-                                         <Save size={14}/> Сохранить для статистики
-                                     </button>
-                                 </div>
+                             <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm space-y-4">
+                                 <div className="flex items-center justify-between"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><Palette size={18} className="text-indigo-600"/> Описание визуала</label><button onClick={handleGenerateMedia} disabled={isGeneratingMedia} className="text-[9px] font-black text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-xl hover:bg-indigo-100 disabled:opacity-50">{isGeneratingMedia ? <Loader2 size={12} className="animate-spin"/> : <Sparkles size={12}/>} Идея</button></div>
+                                 <textarea className="w-full h-32 p-4 border border-slate-100 rounded-2xl text-slate-900 bg-slate-50 focus:ring-4 focus:ring-indigo-500/10 outline-none text-xs resize-none" placeholder="Опишите желаемую картинку..." value={tempVisualDesc} onChange={(e) => setTempVisualDesc(e.target.value)}/>
                              </div>
-
-                             {/* SECTION 2: GENERATION (PROMPT) */}
-                             <div className="bg-slate-50 p-5 rounded-xl border border-slate-200 shadow-inner">
-                                 <div className="flex items-center gap-2 mb-4">
-                                     <Palette size={16} className="text-indigo-600"/>
-                                     <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wide">AI Генератор</h4>
-                                 </div>
-
-                                 <div className="flex items-center gap-2 mb-3">
-                                     <div className="h-px bg-slate-200 flex-1"></div>
-                                     <button 
-                                        onClick={handleTranslatePrompt}
-                                        disabled={isTranslating || !tempVisualDesc}
-                                        className="text-[10px] font-bold text-indigo-600 border border-indigo-200 bg-white hover:bg-indigo-50 px-3 py-1.5 rounded-full transition-colors flex items-center gap-1 shadow-sm"
-                                        title="Перевести описание выше в английский промпт"
-                                     >
-                                         {isTranslating ? <Loader2 size={12} className="animate-spin"/> : <ArrowDownCircle size={12}/>} 
-                                         Создать промпт из описания
-                                     </button>
-                                     <div className="h-px bg-slate-200 flex-1"></div>
-                                 </div>
-
-                                 <div className="relative mb-3">
-                                     <textarea 
-                                         className="w-full h-28 p-3 border border-slate-300 rounded-lg text-indigo-900 bg-white focus:ring-2 focus:ring-indigo-500 outline-none text-xs font-mono resize-none shadow-sm"
-                                         placeholder="Prompt for Midjourney / DALL-E..."
-                                         value={tempPrompt}
-                                         onChange={(e) => setTempPrompt(e.target.value)}
-                                     />
-                                     <button 
-                                        onClick={() => navigator.clipboard.writeText(tempPrompt)}
-                                        className="absolute top-2 right-2 text-slate-400 hover:text-indigo-600 bg-white/50 p-1 rounded"
-                                        title="Копировать"
-                                     >
-                                         <Copy size={14}/>
-                                     </button>
-                                 </div>
-
-                                 <button 
-                                    onClick={handleSimulateImageGeneration}
-                                    disabled={isSimulatingImage || !tempPrompt}
-                                    className="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold text-sm hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-100 flex items-center justify-center gap-2 disabled:opacity-50"
-                                 >
-                                     {isSimulatingImage ? <Loader2 size={16} className="animate-spin"/> : <Sparkles size={16}/>}
-                                     {editedItem.mediaSuggestion?.imageUrl ? 'Пересоздать изображение' : 'Сгенерировать изображение'}
-                                 </button>
+                             <div className="bg-indigo-900 p-6 rounded-3xl space-y-5 shadow-2xl">
+                                 <h4 className="text-[10px] font-black text-indigo-300 uppercase tracking-widest flex items-center gap-2"><Languages size={18} className="text-white"/> AI Промпт (EN)</h4>
+                                 <textarea className="w-full h-24 p-4 bg-indigo-950/50 border border-indigo-500/30 rounded-2xl text-white focus:ring-2 focus:ring-white outline-none text-[10px] font-mono resize-none" placeholder="AI prompt..." value={tempPrompt} onChange={(e) => setTempPrompt(e.target.value)}/>
+                                 <div className="flex gap-2"><button onClick={handleTranslatePrompt} disabled={isTranslating || !tempVisualDesc} className="flex-1 bg-white/10 text-white py-2.5 rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-white/20 transition-all">Перевести</button><button onClick={handleSimulateImageGeneration} disabled={isSimulatingImage || !tempPrompt} className="flex-[2] bg-white text-indigo-900 py-2.5 rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-indigo-50 transition-all shadow-xl">{isSimulatingImage ? 'Генерация...' : 'Показать превью'}</button></div>
                              </div>
                          </div>
-
-                         {/* RIGHT: PREVIEW */}
-                         <div className="bg-slate-100 rounded-xl border border-slate-200 flex flex-col overflow-hidden relative group h-full max-h-[600px]">
+                         <div className="bg-slate-200 rounded-3xl border-4 border-white shadow-inner flex flex-col overflow-hidden relative min-h-[400px]">
                              {editedItem.mediaSuggestion?.imageUrl ? (
-                                 <div className="relative h-full w-full bg-black flex items-center justify-center">
-                                     <img 
-                                        src={editedItem.mediaSuggestion.imageUrl} 
-                                        alt="Generated Preview" 
-                                        className="max-w-full max-h-full object-contain"
-                                     />
-                                     <div className="absolute top-4 right-4 bg-white/10 backdrop-blur-md rounded-lg p-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                         <button onClick={handleSimulateImageGeneration} className="p-2 text-white hover:bg-white/20 rounded-lg"><RefreshCcw size={20}/></button>
-                                     </div>
-                                 </div>
+                                 <div className="relative h-full w-full bg-slate-900 flex items-center justify-center group"><img src={editedItem.mediaSuggestion.imageUrl} className="max-w-full max-h-full object-contain" alt="Preview"/><div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"><button onClick={handleSimulateImageGeneration} className="p-4 bg-white rounded-full text-slate-900 shadow-xl"><RefreshCcw size={24}/></button></div></div>
                              ) : (
-                                 <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-slate-400">
-                                     <Image size={48} className="mb-4 opacity-20"/>
-                                     <p className="text-sm font-medium">Изображение не сгенерировано</p>
-                                     <p className="text-xs max-w-xs mt-2">
-                                         Сформируйте промпт в блоке "AI Генератор" и нажмите кнопку генерации.
-                                     </p>
-                                 </div>
+                                 <div className="flex-1 flex flex-col items-center justify-center p-12 text-center text-slate-400"><Image size={64} className="mb-6 opacity-10 text-indigo-600"/><p className="text-[10px] font-black uppercase tracking-widest opacity-40">Превью отсутствует</p></div>
                              )}
                          </div>
-
                      </div>
                  )}
               </div>
@@ -556,22 +385,33 @@ export const PlanItemModal: React.FC<PlanItemModalProps> = ({
                 authorProfile={authorProfile} 
                 languageProfile={languageProfile} 
                 onScriptGenerated={handleScriptCreated} 
+                platformConfigs={platformConfigs}
+                archetypeConfigs={archetypeConfigs}
                 initialConfig={{ 
                     topic: editedItem.topic, 
                     platform: editedItem.platform, 
                     archetype: editedItem.archetype, 
                     description: editedItem.description 
                 }} 
-                className="h-full p-6 flex flex-col gap-6" 
+                className="h-full p-8 flex flex-col gap-8" 
             />
           )}
         </div>
 
-        {view === 'details' && activeTab === 'main' && (
-            <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-between items-center">
-                <button onClick={handleDelete} className="text-red-500 hover:bg-red-50 px-3 py-2 rounded-lg transition-colors flex items-center gap-2 text-sm font-medium"><Trash2 size={16}/> Удалить</button>
+        {view === 'details' && (
+            <div className="p-6 border-t border-slate-100 bg-slate-50 flex justify-between items-center gap-4">
+                <button onClick={handleDelete} className="text-red-500 hover:bg-red-50 px-5 py-2.5 rounded-xl transition-colors flex items-center gap-2 text-sm font-bold"><Trash2 size={18}/> Удалить</button>
+                
                 <div className="flex gap-3">
-                    <button onClick={() => { onSave(editedItem); onClose(); }} className="px-4 py-2 text-slate-600 font-medium hover:bg-slate-200 rounded-lg transition-colors text-sm">Сохранить</button>
+                    {editedItem.status !== PlanStatus.DONE && (
+                        <button 
+                            onClick={handleArchive}
+                            className="px-6 py-3 bg-white border border-indigo-200 text-indigo-600 font-bold text-sm rounded-2xl hover:bg-indigo-50 transition-all flex items-center gap-2"
+                        >
+                            <Archive size={18}/> В архив для анализа
+                        </button>
+                    )}
+                    <button onClick={() => { onSave(editedItem); onClose(); }} className="px-8 py-3 bg-slate-900 text-white font-black text-sm rounded-2xl hover:bg-black transition-all shadow-xl shadow-slate-200 flex items-center gap-2"><CheckCircle2 size={18}/> Сохранить изменения</button>
                 </div>
             </div>
         )}

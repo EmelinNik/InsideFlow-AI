@@ -7,12 +7,15 @@ import { StyleTrainer } from './components/StyleTrainer';
 import { ContentGenerator } from './components/ContentGenerator';
 import { ScriptModal } from './components/ScriptModal';
 import { AuthorProfileView } from './components/AuthorProfileView';
+import { ProductsView } from './components/ProductsView';
 import { Login } from './components/Login';
 import { Landing } from './components/Landing';
 import { ContentCalendar } from './components/ContentCalendar';
 import { PricingModal } from './components/PricingModal';
 import { Analytics } from './components/Analytics';
-import { AppState, AuthorProfile, LanguageProfile, GeneratedScript, TelegramUser, NarrativeVoice, TargetPlatform, ContentPlanItem, ContentStrategy, PostArchetype, PlanStatus, StrategyPreset, SubscriptionPlan, Project, PLAN_LIMITS } from './types';
+import { PromptSettings } from './components/PromptSettings';
+import { AppState, AuthorProfile, LanguageProfile, GeneratedScript, TelegramUser, NarrativeVoice, TargetPlatform, ContentPlanItem, ContentStrategy, PostArchetype, PlanStatus, StrategyPreset, SubscriptionPlan, Project, PLAN_LIMITS, PromptKey, PlatformConfig, ArchetypeConfig, GenerationProgress } from './types';
+import { DEFAULT_PLATFORM_CONFIGS, DEFAULT_ARCHETYPE_CONFIGS } from './constants';
 import { getSessionUserId, setSessionUserId, clearSession, saveUserData, loadUserData, clearUserData } from './services/storage';
 import { History, Eye, Loader2, FolderOpen } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
@@ -27,13 +30,14 @@ const defaultAuthorProfile: AuthorProfile = {
     contentGoals: '',
     values: '',
     taboos: '',
+    products: []
 };
 
 const createNewProject = (name: string, baseProfile?: AuthorProfile): Project => ({
     id: Date.now().toString(),
     name: name,
     createdAt: new Date().toISOString(),
-    authorProfile: baseProfile ? { ...baseProfile, role: '', targetAudience: '', audiencePainPoints: '' } : { ...defaultAuthorProfile },
+    authorProfile: baseProfile ? { ...baseProfile, role: '', targetAudience: '', audiencePainPoints: '', products: [] } : { ...defaultAuthorProfile },
     languageProfile: {
         isAnalyzed: false,
         styleDescription: '',
@@ -60,7 +64,10 @@ const createNewProject = (name: string, baseProfile?: AuthorProfile): Project =>
         weeklyFocus: '',
         startDate: new Date().toISOString().split('T')[0],
         endDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
-    }
+    },
+    customPrompts: {},
+    platformConfigs: [...DEFAULT_PLATFORM_CONFIGS],
+    archetypeConfigs: [...DEFAULT_ARCHETYPE_CONFIGS]
 });
 
 const initialState: AppState = {
@@ -82,7 +89,7 @@ function App() {
   const [showGuide, setShowGuide] = useState(false);
   const [showPricing, setShowPricing] = useState(false);
   
-  const [generatorConfig, setGeneratorConfig] = useState<{ topic: string; platform: TargetPlatform; archetype: PostArchetype } | null>(null);
+  const [generatorConfig, setGeneratorConfig] = useState<{ topic: string; platform: string; archetype: string; description?: string } | null>(null);
 
   const activeProject = state.projects.find(p => p.id === state.currentProjectId) || state.projects[0];
 
@@ -97,13 +104,7 @@ function App() {
           let projects = userData.projects || [];
           let currentProjectId = userData.currentProjectId;
 
-          if (projects.length > 0 && !projects[0].authorProfile && userData.authorProfile) {
-              projects = projects.map((p: any) => ({
-                  ...p,
-                  authorProfile: { ...userData.authorProfile }
-              }));
-          }
-
+          // Migration logic for old data structure or empty projects
           if (projects.length === 0 && (userData.contentPlan || userData.languageProfile)) {
               const migratedProject: Project = {
                   ...createNewProject("Мой Проект"),
@@ -112,7 +113,7 @@ function App() {
                   writingSamples: userData.writingSamples || [],
                   scripts: userData.scripts || [],
                   contentPlan: userData.contentPlan || [],
-                  strategy: userData.strategy || createNewProject("Temp").strategy
+                  strategy: userData.strategy || createNewProject("Temp").strategy,
               };
               projects = [migratedProject];
               currentProjectId = migratedProject.id;
@@ -121,6 +122,31 @@ function App() {
               projects = [defaultProj];
               currentProjectId = defaultProj.id;
           }
+          
+          // Ensure configs exist and structure is correct (Object vs String array migration)
+          projects = projects.map((p: any) => {
+              // Basic ensuring configs exist
+              let archetypes = p.archetypeConfigs || [...DEFAULT_ARCHETYPE_CONFIGS];
+              
+              // DEEP MIGRATION: Check if 'structure' is array of strings and convert if needed
+              archetypes = archetypes.map((a: any) => {
+                  if (a.structure && a.structure.length > 0 && typeof a.structure[0] === 'string') {
+                      return {
+                          ...a,
+                          structure: a.structure.map((s: string) => ({ id: s, description: 'Инструкция по умолчанию.' }))
+                      };
+                  }
+                  return a;
+              });
+
+              return {
+                  ...p,
+                  platformConfigs: p.platformConfigs || [...DEFAULT_PLATFORM_CONFIGS],
+                  archetypeConfigs: archetypes,
+                  // Ensure products array exists
+                  authorProfile: { ...p.authorProfile, products: p.authorProfile?.products || [] }
+              };
+          });
 
           setState({
             ...initialState,
@@ -172,6 +198,27 @@ function App() {
              projects = [def];
              currentProjectId = def.id;
          }
+         
+         // Ensure configs exist and migrate
+         projects = projects.map((p: any) => {
+              let archetypes = p.archetypeConfigs || [...DEFAULT_ARCHETYPE_CONFIGS];
+              archetypes = archetypes.map((a: any) => {
+                  if (a.structure && a.structure.length > 0 && typeof a.structure[0] === 'string') {
+                      return {
+                          ...a,
+                          structure: a.structure.map((s: string) => ({ id: s, description: 'Инструкция по умолчанию.' }))
+                      };
+                  }
+                  return a;
+              });
+              
+              return {
+                  ...p,
+                  platformConfigs: p.platformConfigs || [...DEFAULT_PLATFORM_CONFIGS],
+                  archetypeConfigs: archetypes,
+                  authorProfile: { ...p.authorProfile, products: p.authorProfile?.products || [] }
+              };
+         });
 
          setState({
              ...initialState,
@@ -331,7 +378,8 @@ function App() {
         return {
             ...p,
             scripts: [script, ...p.scripts],
-            contentPlan: updatedPlan
+            contentPlan: updatedPlan,
+            generationProgress: undefined // Clear progress on success
         };
     });
   };
@@ -366,12 +414,38 @@ function App() {
   };
 
   const handleGenerateFromCalendar = (item: ContentPlanItem) => {
+      let desc = item.description || "";
+      // Inject product context if selected
+      if (item.productId) {
+          const prod = activeProject.authorProfile.products?.find(p => p.id === item.productId);
+          if (prod) {
+              desc = `[ПРОДУКТ: ${prod.name} - ${prod.description}]\n\n${desc}`;
+          }
+      }
+
       setGeneratorConfig({
           topic: item.topic,
           platform: item.platform,
-          archetype: item.archetype
+          archetype: item.archetype,
+          description: desc
       });
       setActiveTab('create');
+  };
+
+  const handleUpdatePrompts = (prompts: Partial<Record<PromptKey, string>>) => {
+      updateActiveProject(p => ({ ...p, customPrompts: prompts }));
+  };
+
+  const handleUpdatePlatforms = (platforms: PlatformConfig[]) => {
+      updateActiveProject(p => ({ ...p, platformConfigs: platforms }));
+  };
+
+  const handleUpdateArchetypes = (archetypes: ArchetypeConfig[]) => {
+      updateActiveProject(p => ({ ...p, archetypeConfigs: archetypes }));
+  };
+
+  const handleUpdateGenerationProgress = (progress?: GenerationProgress) => {
+      updateActiveProject(p => ({ ...p, generationProgress: progress }));
   };
 
   if (loading) {
@@ -401,6 +475,8 @@ function App() {
                 languageProfile={activeProject.languageProfile}
                 plan={activeProject.contentPlan}
                 strategy={activeProject.strategy}
+                platformConfigs={activeProject.platformConfigs}
+                archetypeConfigs={activeProject.archetypeConfigs}
                 onUpdatePlan={handleUpdatePlan}
                 onUpdateStrategy={handleUpdateStrategy}
                 onGenerateContent={handleGenerateFromCalendar}
@@ -421,7 +497,11 @@ function App() {
             authorProfile={projectProfile}
             languageProfile={activeProject.languageProfile}
             onScriptGenerated={handleScriptGenerated}
+            platformConfigs={activeProject.platformConfigs}
+            archetypeConfigs={activeProject.archetypeConfigs}
             initialConfig={generatorConfig}
+            persistence={activeProject.generationProgress}
+            onPersistenceUpdate={handleUpdateGenerationProgress}
           />
         );
       case 'style':
@@ -439,6 +519,24 @@ function App() {
                 profile={projectProfile} 
                 onUpdate={handleUpdateAuthorProfile}
                 onRetakeOnboarding={() => setShowOnboarding(true)}
+            />
+        );
+      case 'products':
+        return (
+            <ProductsView 
+                profile={projectProfile} 
+                onUpdate={handleUpdateAuthorProfile}
+            />
+        );
+      case 'settings':
+        return (
+            <PromptSettings 
+                customPrompts={activeProject.customPrompts}
+                platformConfigs={activeProject.platformConfigs}
+                archetypeConfigs={activeProject.archetypeConfigs}
+                onSavePrompts={handleUpdatePrompts}
+                onSavePlatforms={handleUpdatePlatforms}
+                onSaveArchetypes={handleUpdateArchetypes}
             />
         );
       case 'dashboard':

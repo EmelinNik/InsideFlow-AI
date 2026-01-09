@@ -1,6 +1,6 @@
 
 import React, { ReactNode } from 'react';
-import { BookOpen, PenTool, User, Zap, LayoutDashboard, LogOut, Calendar, ChevronRight, BarChart3, HelpCircle } from 'lucide-react';
+import { BookOpen, PenTool, User, Zap, LayoutDashboard, LogOut, Calendar, ChevronRight, BarChart3, HelpCircle, Settings, Package } from 'lucide-react';
 import { Project, SubscriptionPlan } from '../types';
 import { ProjectSelector } from './ProjectSelector';
 
@@ -42,6 +42,8 @@ export const Layout: React.FC<LayoutProps> = ({
     { id: 'analytics', label: 'Аналитика', icon: BarChart3 },
     { id: 'style', label: 'Стиль проекта', icon: Zap },
     { id: 'profile', label: 'Профиль проекта', icon: User },
+    { id: 'products', label: 'Товары и услуги', icon: Package },
+    { id: 'settings', label: 'Настройки AI', icon: Settings },
   ];
 
   const activeProject = projects.find(p => p.id === currentProjectId);
@@ -165,7 +167,7 @@ export const Layout: React.FC<LayoutProps> = ({
 
       {/* --- MOBILE BOTTOM NAV --- */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-slate-200 px-2 py-1 flex items-center justify-around pb-safe">
-          {navItems.map((item) => (
+          {navItems.slice(0, 5).map((item) => (
             <button
               key={item.id}
               onClick={() => onNavigate(item.id)}
@@ -179,13 +181,6 @@ export const Layout: React.FC<LayoutProps> = ({
               <span className="text-[10px] font-bold uppercase tracking-tight">{item.label}</span>
             </button>
           ))}
-          <button
-              onClick={onLogout}
-              className="flex flex-col items-center gap-1 p-2 text-slate-400"
-          >
-              <LogOut size={20} />
-              <span className="text-[10px] font-bold uppercase tracking-tight">Выйти</span>
-          </button>
       </nav>
     </div>
   );

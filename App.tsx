@@ -14,7 +14,7 @@ import { ContentCalendar } from './components/ContentCalendar';
 import { PricingModal } from './components/PricingModal';
 import { Analytics } from './components/Analytics';
 import { PromptSettings } from './components/PromptSettings';
-import { AppState, AuthorProfile, LanguageProfile, GeneratedScript, TelegramUser, NarrativeVoice, TargetPlatform, ContentPlanItem, ContentStrategy, PostArchetype, PlanStatus, StrategyPreset, SubscriptionPlan, Project, PLAN_LIMITS, PromptKey, PlatformConfig, ArchetypeConfig, GenerationProgress } from './types';
+import { AppState, AuthorProfile, LanguageProfile, GeneratedScript, TelegramUser, NarrativeVoice, TargetPlatform, ContentPlanItem, ContentStrategy, PostArchetype, PlanStatus, StrategyPreset, SubscriptionPlan, Project, PLAN_LIMITS, PromptKey, PlatformConfig, ArchetypeConfig, GenerationProgress, ContentGoal } from './types';
 import { DEFAULT_PLATFORM_CONFIGS, DEFAULT_ARCHETYPE_CONFIGS } from './constants';
 import { getSessionUserId, setSessionUserId, clearSession, saveUserData, loadUserData, clearUserData } from './services/storage';
 import { History, Eye, Loader2, FolderOpen } from 'lucide-react';
@@ -405,6 +405,31 @@ function App() {
       setSelectedScript(null);
   };
 
+  const handleScheduleScript = (script: GeneratedScript, date: string, time: string) => {
+      const newItem: ContentPlanItem = {
+          id: Date.now().toString(),
+          date,
+          time,
+          topic: script.topic,
+          description: '',
+          rationale: 'Добавлено из готовых сценариев',
+          platform: script.platform,
+          archetype: 'Сценарий',
+          goal: ContentGoal.AWARENESS,
+          status: PlanStatus.DRAFT, // Already has content
+          scriptId: script.id,
+          generatedContent: script.content
+      };
+
+      updateActiveProject(p => ({
+          ...p,
+          contentPlan: [...p.contentPlan, newItem]
+      }));
+      
+      setSelectedScript(null);
+      alert(`Сценарий добавлен в календарь на ${new Date(date).toLocaleDateString('ru-RU')} в ${time}`);
+  };
+
   const handleUpdatePlan = (newPlan: ContentPlanItem[]) => {
       updateActiveProject(p => ({ ...p, contentPlan: newPlan }));
   };
@@ -690,6 +715,7 @@ function App() {
         onClose={() => setSelectedScript(null)} 
         onUpdate={handleUpdateScript}
         onDelete={handleDeleteScript}
+        onSchedule={handleScheduleScript}
       />
 
       {showPricing && (

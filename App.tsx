@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Layout } from './components/Layout';
 import { Onboarding } from './components/Onboarding';
 import { OnboardingGuide } from './components/OnboardingGuide';
@@ -14,11 +14,13 @@ import { ContentCalendar } from './components/ContentCalendar';
 import { PricingModal } from './components/PricingModal';
 import { Analytics } from './components/Analytics';
 import { PromptSettings } from './components/PromptSettings';
-import { AppState, AuthorProfile, LanguageProfile, GeneratedScript, TelegramUser, NarrativeVoice, TargetPlatform, ContentPlanItem, ContentStrategy, PostArchetype, PlanStatus, StrategyPreset, SubscriptionPlan, Project, PLAN_LIMITS, PromptKey, PlatformConfig, ArchetypeConfig, GenerationProgress, ContentGoal } from './types';
+import { AppState, AuthorProfile, LanguageProfile, GeneratedScript, TelegramUser, NarrativeVoice, TargetPlatform, ContentPlanItem, ContentStrategy, PlanStatus, StrategyPreset, SubscriptionPlan, Project, PLAN_LIMITS, PromptKey, PlatformConfig, ArchetypeConfig, GenerationProgress, ContentGoal } from './types';
 import { DEFAULT_PLATFORM_CONFIGS, DEFAULT_ARCHETYPE_CONFIGS } from './constants';
-import { getSessionUserId, setSessionUserId, clearSession, saveUserData, loadUserData, clearUserData } from './services/storage';
+import { getSessionUserId, setSessionUserId, clearSession, saveUserData, loadUserData } from './services/storage';
 import { History, Eye, Loader2, FolderOpen } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import { createId } from './utils/id';
+import { normalizePlatformName } from './utils/platforms';
 
 const defaultAuthorProfile: AuthorProfile = {
     name: '',
@@ -33,38 +35,75 @@ const defaultAuthorProfile: AuthorProfile = {
     products: []
 };
 
+const createDefaultLanguageProfile = (): LanguageProfile => ({
+    isAnalyzed: false,
+    styleDescription: '',
+    keywords: [],
+    sentenceStructure: '',
+    emotionalResonance: '',
+    visualStyle: {
+        isDefined: false,
+        aesthetic: '',
+        colors: '',
+        composition: '',
+        elements: ''
+    }
+});
+
+const createDefaultStrategy = (): ContentStrategy => ({
+    platforms: [TargetPlatform.TELEGRAM],
+    postsPerWeek: 3,
+    personalizePerPlatform: false,
+    generatePerPlatform: false,
+    preset: StrategyPreset.BALANCED,
+    weeklyFocus: '',
+    startDate: new Date().toISOString().split('T')[0],
+    endDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+});
+
+const normalizeArchetypes = (archetypes: ArchetypeConfig[]): ArchetypeConfig[] => {
+    return archetypes.map((a: ArchetypeConfig) => {
+        if (a.structure && a.structure.length > 0 && typeof a.structure[0] === 'string') {
+            return {
+                ...a,
+                structure: (a.structure as unknown as string[]).map((s: string) => ({ id: s, description: 'Инструкция по умолчанию.' }))
+            };
+        }
+        return a;
+    });
+};
+
+const normalizeProject = (project: Project): Project => {
+    const baseStrategy = createDefaultStrategy();
+    const normalizedStrategy = {
+        ...baseStrategy,
+        ...project.strategy,
+        platforms: (project.strategy?.platforms || baseStrategy.platforms).map((platform) => normalizePlatformName(platform))
+    };
+
+    return {
+        ...project,
+        strategy: normalizedStrategy,
+        platformConfigs: project.platformConfigs || [...DEFAULT_PLATFORM_CONFIGS],
+        archetypeConfigs: normalizeArchetypes(project.archetypeConfigs || [...DEFAULT_ARCHETYPE_CONFIGS]),
+        authorProfile: { ...(project.authorProfile || defaultAuthorProfile), products: project.authorProfile?.products || [] },
+        contentPlan: (project.contentPlan || []).map(item => ({
+            ...item,
+            platform: normalizePlatformName(item.platform)
+        }))
+    };
+};
+
 const createNewProject = (name: string, baseProfile?: AuthorProfile): Project => ({
-    id: Date.now().toString(),
+    id: createId(),
     name: name,
     createdAt: new Date().toISOString(),
     authorProfile: baseProfile ? { ...baseProfile, role: '', targetAudience: '', audiencePainPoints: '', products: [] } : { ...defaultAuthorProfile },
-    languageProfile: {
-        isAnalyzed: false,
-        styleDescription: '',
-        keywords: [],
-        sentenceStructure: '',
-        emotionalResonance: '',
-        visualStyle: {
-            isDefined: false,
-            aesthetic: '',
-            colors: '',
-            composition: '',
-            elements: ''
-        }
-    },
+    languageProfile: createDefaultLanguageProfile(),
     writingSamples: [],
     scripts: [],
     contentPlan: [],
-    strategy: {
-        platforms: [TargetPlatform.TELEGRAM],
-        postsPerWeek: 3,
-        personalizePerPlatform: false,
-        generatePerPlatform: false,
-        preset: StrategyPreset.BALANCED,
-        weeklyFocus: '',
-        startDate: new Date().toISOString().split('T')[0],
-        endDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
-    },
+    strategy: createDefaultStrategy(),
     customPrompts: {},
     platformConfigs: [...DEFAULT_PLATFORM_CONFIGS],
     archetypeConfigs: [...DEFAULT_ARCHETYPE_CONFIGS]
@@ -88,6 +127,7 @@ function App() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
   const [showPricing, setShowPricing] = useState(false);
+  const saveTimeoutRef = useRef<number | null>(null);
   
   const [generatorConfig, setGeneratorConfig] = useState<{ topic: string; platform: string; archetype: string; description?: string } | null>(null);
 
@@ -98,65 +138,56 @@ function App() {
       const currentUserId = getSessionUserId();
       
       if (currentUserId) {
-        const userData = loadUserData(currentUserId);
+        const userData = await loadUserData(currentUserId);
         
         if (userData) {
-          let projects = userData.projects || [];
-          let currentProjectId = userData.currentProjectId;
+          const {
+              authorProfile: storedAuthorProfile,
+              subscriptionPlan: storedSubscriptionPlan,
+              hasOnboarded: storedHasOnboarded,
+              hasSeenGuide: storedHasSeenGuide,
+              projects: storedProjects,
+              currentProjectId: storedCurrentProjectId,
+              contentPlan,
+              languageProfile,
+              writingSamples,
+              scripts,
+              strategy
+          } = userData;
+
+          let projects = storedProjects || [];
+          let currentProjectId = storedCurrentProjectId;
 
           // Migration logic for old data structure or empty projects
-          if (projects.length === 0 && (userData.contentPlan || userData.languageProfile)) {
+          if (projects.length === 0 && (contentPlan || languageProfile)) {
               const migratedProject: Project = {
                   ...createNewProject("Мой Проект"),
-                  authorProfile: userData.authorProfile || defaultAuthorProfile,
-                  languageProfile: userData.languageProfile || createNewProject("Temp").languageProfile,
-                  writingSamples: userData.writingSamples || [],
-                  scripts: userData.scripts || [],
-                  contentPlan: userData.contentPlan || [],
-                  strategy: userData.strategy || createNewProject("Temp").strategy,
+                  authorProfile: storedAuthorProfile || defaultAuthorProfile,
+                  languageProfile: (languageProfile as LanguageProfile) || createDefaultLanguageProfile(),
+                  writingSamples: (writingSamples as string[]) || [],
+                  scripts: (scripts as GeneratedScript[]) || [],
+                  contentPlan: (contentPlan as ContentPlanItem[]) || [],
+                  strategy: (strategy as ContentStrategy) || createDefaultStrategy(),
               };
               projects = [migratedProject];
               currentProjectId = migratedProject.id;
           } else if (projects.length === 0) {
-              const defaultProj = createNewProject("Мой Первый Проект", userData.authorProfile);
+              const defaultProj = createNewProject("Мой Первый Проект", storedAuthorProfile);
               projects = [defaultProj];
               currentProjectId = defaultProj.id;
           }
-          
-          // Ensure configs exist and structure is correct (Object vs String array migration)
-          projects = projects.map((p: any) => {
-              // Basic ensuring configs exist
-              let archetypes = p.archetypeConfigs || [...DEFAULT_ARCHETYPE_CONFIGS];
-              
-              // DEEP MIGRATION: Check if 'structure' is array of strings and convert if needed
-              archetypes = archetypes.map((a: any) => {
-                  if (a.structure && a.structure.length > 0 && typeof a.structure[0] === 'string') {
-                      return {
-                          ...a,
-                          structure: a.structure.map((s: string) => ({ id: s, description: 'Инструкция по умолчанию.' }))
-                      };
-                  }
-                  return a;
-              });
-
-              return {
-                  ...p,
-                  platformConfigs: p.platformConfigs || [...DEFAULT_PLATFORM_CONFIGS],
-                  archetypeConfigs: archetypes,
-                  // Ensure products array exists
-                  authorProfile: { ...p.authorProfile, products: p.authorProfile?.products || [] }
-              };
-          });
+          projects = projects.map((p: Project) => normalizeProject(p));
 
           setState({
             ...initialState,
-            ...userData,
             isAuthenticated: true,
             authorProfile: {
-                ...userData.authorProfile!,
+                ...(storedAuthorProfile || defaultAuthorProfile),
                 telegramId: currentUserId
             },
-            subscriptionPlan: userData.subscriptionPlan || SubscriptionPlan.PRO,
+            subscriptionPlan: storedSubscriptionPlan || SubscriptionPlan.PRO,
+            hasOnboarded: storedHasOnboarded ?? initialState.hasOnboarded,
+            hasSeenGuide: storedHasSeenGuide ?? initialState.hasSeenGuide,
             projects,
             currentProjectId
           });
@@ -172,8 +203,18 @@ function App() {
 
   useEffect(() => {
     if (!loading && state.isAuthenticated && state.authorProfile?.telegramId) {
-       saveUserData(state.authorProfile.telegramId, state);
+       if (saveTimeoutRef.current) {
+           window.clearTimeout(saveTimeoutRef.current);
+       }
+       saveTimeoutRef.current = window.setTimeout(() => {
+           void saveUserData(state.authorProfile!.telegramId!, state);
+       }, 600);
     }
+    return () => {
+        if (saveTimeoutRef.current) {
+            window.clearTimeout(saveTimeoutRef.current);
+        }
+    };
   }, [state, loading]);
 
   // Handle Guide Display
@@ -183,15 +224,24 @@ function App() {
       }
   }, [loading, state.isAuthenticated, state.hasSeenGuide, showOnboarding]);
 
-  const handleTelegramLogin = (user: TelegramUser) => {
+  const handleTelegramLogin = async (user: TelegramUser) => {
      setLoading(true);
      setSessionUserId(user.id);
 
-     const existingData = loadUserData(user.id);
+     const existingData = await loadUserData(user.id);
 
      if (existingData) {
-         let projects = existingData.projects || [];
-         let currentProjectId = existingData.currentProjectId;
+         const {
+             authorProfile: storedAuthorProfile,
+             subscriptionPlan: storedSubscriptionPlan,
+             hasOnboarded: storedHasOnboarded,
+             hasSeenGuide: storedHasSeenGuide,
+             projects: storedProjects,
+             currentProjectId: storedCurrentProjectId
+         } = existingData;
+
+         let projects = storedProjects || [];
+         let currentProjectId = storedCurrentProjectId;
          
          if (!projects.length) {
              const def = createNewProject("Мой Проект", { ...defaultAuthorProfile, name: `${user.first_name} ${user.last_name || ''}`.trim() });
@@ -200,36 +250,20 @@ function App() {
          }
          
          // Ensure configs exist and migrate
-         projects = projects.map((p: any) => {
-              let archetypes = p.archetypeConfigs || [...DEFAULT_ARCHETYPE_CONFIGS];
-              archetypes = archetypes.map((a: any) => {
-                  if (a.structure && a.structure.length > 0 && typeof a.structure[0] === 'string') {
-                      return {
-                          ...a,
-                          structure: a.structure.map((s: string) => ({ id: s, description: 'Инструкция по умолчанию.' }))
-                      };
-                  }
-                  return a;
-              });
-              
-              return {
-                  ...p,
-                  platformConfigs: p.platformConfigs || [...DEFAULT_PLATFORM_CONFIGS],
-                  archetypeConfigs: archetypes,
-                  authorProfile: { ...p.authorProfile, products: p.authorProfile?.products || [] }
-              };
-         });
-
+         projects = projects.map((p: Project) => normalizeProject(p));
+         
          setState({
              ...initialState,
-             ...existingData,
              isAuthenticated: true,
              authorProfile: {
-                 ...existingData.authorProfile!,
-                 name: existingData.authorProfile?.name || `${user.first_name} ${user.last_name || ''}`.trim(),
-                 avatarUrl: user.photo_url || existingData.authorProfile?.avatarUrl,
+                 ...(storedAuthorProfile || defaultAuthorProfile),
+                 name: storedAuthorProfile?.name || `${user.first_name} ${user.last_name || ''}`.trim(),
+                 avatarUrl: user.photo_url || storedAuthorProfile?.avatarUrl,
                  telegramId: user.id
              },
+             subscriptionPlan: storedSubscriptionPlan || SubscriptionPlan.PRO,
+             hasOnboarded: storedHasOnboarded ?? initialState.hasOnboarded,
+             hasSeenGuide: storedHasSeenGuide ?? initialState.hasSeenGuide,
              projects,
              currentProjectId
          });
@@ -407,13 +441,13 @@ function App() {
 
   const handleScheduleScript = (script: GeneratedScript, date: string, time: string) => {
       const newItem: ContentPlanItem = {
-          id: Date.now().toString(),
+          id: createId(),
           date,
           time,
           topic: script.topic,
           description: '',
           rationale: 'Добавлено из готовых сценариев',
-          platform: script.platform,
+          platform: normalizePlatformName(script.platform),
           archetype: 'Сценарий',
           goal: ContentGoal.AWARENESS,
           status: PlanStatus.DRAFT, // Already has content
@@ -489,8 +523,16 @@ function App() {
     return <Landing onStart={() => setActiveTab('dashboard')} onTelegramAuth={handleTelegramLogin} />;
   }
 
+  if (!activeProject) {
+    return (
+        <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+            <Loader2 size={40} className="text-indigo-600 animate-spin" />
+        </div>
+    );
+  }
+
   const renderContent = () => {
-    const projectProfile = activeProject.authorProfile || state.authorProfile || defaultAuthorProfile;
+    const projectProfile = activeProject?.authorProfile || state.authorProfile || defaultAuthorProfile;
 
     switch (activeTab) {
       case 'calendar':

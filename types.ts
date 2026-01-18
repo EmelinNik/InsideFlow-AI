@@ -7,6 +7,8 @@ export enum TargetPlatform {
   THREADS = 'Threads'
 }
 
+export type PlatformName = TargetPlatform | (string & {});
+
 export enum PostArchetype {
   SHORT_POST = 'Короткий пост',
   REFLECTION = 'Размышление',
@@ -102,7 +104,7 @@ export interface ContentPlanItem {
   topic: string;
   description?: string;
   rationale: string;
-  platform: string; 
+  platform: PlatformName;
   archetype: string; 
   goal: ContentGoal;
   status: PlanStatus;
@@ -114,7 +116,7 @@ export interface ContentPlanItem {
 }
 
 export interface ContentStrategy {
-  platforms: string[]; 
+  platforms: PlatformName[]; 
   postsPerWeek: number;
   personalizePerPlatform: boolean; 
   generatePerPlatform: boolean;

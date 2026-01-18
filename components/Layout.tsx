@@ -122,9 +122,11 @@ export const Layout: React.FC<LayoutProps> = ({
             Выйти
           </button>
 
-          <div 
+          <button
+            type="button"
             onClick={onOpenPricing}
-            className="bg-slate-50 p-3 rounded-lg border border-slate-100 cursor-pointer hover:border-indigo-200 hover:bg-indigo-50/50 transition-all group mt-2"
+            className="bg-slate-50 p-3 rounded-lg border border-slate-100 cursor-pointer hover:border-indigo-200 hover:bg-indigo-50/50 transition-all group mt-2 text-left"
+            aria-label="Открыть выбор тарифа"
           >
             <div className="flex justify-between items-center mb-2">
                 <span className="text-xs text-slate-500 font-medium uppercase">Тариф</span>
@@ -133,7 +135,7 @@ export const Layout: React.FC<LayoutProps> = ({
             <div className={`text-[10px] font-bold px-2 py-1 rounded inline-block ${getPlanColor(currentPlan)}`}>
                {getPlanLabel(currentPlan)}
             </div>
-          </div>
+          </button>
         </div>
       </aside>
 
@@ -151,10 +153,10 @@ export const Layout: React.FC<LayoutProps> = ({
               </div>
           </div>
           <div className="flex gap-2">
-             <button onClick={onOpenGuide} className="p-1.5 text-slate-400">
+             <button type="button" onClick={onOpenGuide} className="p-1.5 text-slate-400" aria-label="Открыть инструкцию">
                 <HelpCircle size={18} />
              </button>
-             <button onClick={onOpenPricing} className={`text-[9px] font-bold px-2 py-1 rounded ${getPlanColor(currentPlan)}`}>
+             <button type="button" onClick={onOpenPricing} className={`text-[9px] font-bold px-2 py-1 rounded ${getPlanColor(currentPlan)}`}>
                 {getPlanLabel(currentPlan)}
              </button>
           </div>

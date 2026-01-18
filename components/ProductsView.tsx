@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import { AuthorProfile, ProductService } from '../types';
 import { Package, Plus, Trash2, X, ShoppingBag, DollarSign, FileText, Info } from 'lucide-react';
+import { createId } from '../utils/id';
 
 interface ProductsViewProps {
   profile: AuthorProfile;
@@ -18,7 +19,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ profile, onUpdate })
       return;
     }
     const product: ProductService = {
-      id: Date.now().toString(),
+      id: createId(),
       name: newProduct.name!,
       description: newProduct.description!,
       price: newProduct.price

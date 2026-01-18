@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { AuthorProfile, NarrativeVoice, ProductService } from '../types';
 import { ArrowRight, Check, Sparkles, Loader2, Wand2, X, Package, Plus, Trash2 } from 'lucide-react';
 import { suggestAudienceProfile, suggestStyleProfile } from '../services/geminiService';
+import { createId } from '../utils/id';
 
 interface OnboardingProps {
   onComplete: (profile: AuthorProfile) => void;
@@ -60,7 +61,7 @@ export const Onboarding: React.FC<OnboardingProps> = ({ onComplete, onCancel }) 
   const handleAddProduct = () => {
       if (!prodName || !prodDesc) return;
       const newProd: ProductService = {
-          id: Date.now().toString(),
+          id: createId(),
           name: prodName,
           description: prodDesc,
           price: prodPrice

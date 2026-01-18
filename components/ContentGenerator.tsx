@@ -1,8 +1,9 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { AuthorProfile, LanguageProfile, GeneratedScript, GeneratedOption, Project, PlatformConfig, ArchetypeConfig, GenerationProgress, ArchetypeStep } from '../types';
+import { AuthorProfile, LanguageProfile, GeneratedScript, GeneratedOption, PlatformConfig, ArchetypeConfig, GenerationProgress, ArchetypeStep, TargetPlatform, PostArchetype } from '../types';
 import { generateUnitOptions, getArchetypeFormula, getUnitName } from '../services/geminiService';
 import { Loader2, Play, RefreshCw, MousePointerClick, Star, CheckCircle2, FileText, Edit2, X, Check, Trash2, MessageSquare, Send } from 'lucide-react';
+import { createId } from '../utils/id';
 
 interface ContentGeneratorProps {
   authorProfile: AuthorProfile;
@@ -29,8 +30,8 @@ export const ContentGenerator: React.FC<ContentGeneratorProps> = ({
   onPersistenceUpdate,
   className
 }) => {
-  const defaultPlatform = platformConfigs[0]?.name || 'Telegram';
-  const defaultArchetype = archetypeConfigs[0]?.name || 'Short Post';
+  const defaultPlatform = platformConfigs[0]?.name || TargetPlatform.TELEGRAM;
+  const defaultArchetype = archetypeConfigs[0]?.name || PostArchetype.SHORT_POST;
 
   // --- STATE ---
   const [topic, setTopic] = useState(persistence?.topic || '');
@@ -183,7 +184,7 @@ export const ContentGenerator: React.FC<ContentGeneratorProps> = ({
     });
     
     onScriptGenerated({
-      id: Date.now().toString(),
+      id: createId(),
       topic, platform,
       content: finalMarkdown,
       createdAt: new Date().toISOString()

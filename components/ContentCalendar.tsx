@@ -1,10 +1,11 @@
 
 import React, { useState, useEffect } from 'react';
-import { ContentPlanItem, ContentGoal, ContentStrategy, PlanStatus, AuthorProfile, StrategyPreset, LanguageProfile, GeneratedScript, CalendarAnalysis, PlatformConfig, ArchetypeConfig } from '../types';
+import { ContentPlanItem, ContentGoal, ContentStrategy, PlanStatus, AuthorProfile, StrategyPreset, LanguageProfile, GeneratedScript, CalendarAnalysis, PlatformConfig, ArchetypeConfig, TargetPlatform, PlatformName, PostArchetype } from '../types';
 import { generateContentPlan, calculatePlanDistribution, analyzeContentCalendar } from '../services/geminiService';
 import { Calendar as CalendarIcon, Plus, Wand2, RefreshCw, BarChart3, ArrowRight, ArrowLeft, Loader2, CheckCircle, FileEdit, AlertCircle, Target, Sparkles, X, Microscope, Check, LayoutGrid, List, ToggleRight, ToggleLeft, Copy, Share2, Clock, PieChart, Lightbulb } from 'lucide-react';
 import { PlanItemModal } from './PlanItemModal';
 import ReactMarkdown from 'react-markdown';
+import { createId } from '../utils/id';
 
 interface ContentCalendarProps {
   authorProfile: AuthorProfile;
@@ -95,14 +96,14 @@ export const ContentCalendar: React.FC<ContentCalendarProps> = ({
 
   const handleCreateItem = (dateStr: string) => {
     const newItem: ContentPlanItem = {
-      id: Date.now().toString(),
+      id: createId(),
       date: dateStr,
       time: "12:00",
       topic: "Новая тема",
       description: "",
       rationale: "Ручное создание",
-      platform: strategy.platforms[0] || 'Telegram',
-      archetype: 'Короткий пост',
+      platform: strategy.platforms[0] || TargetPlatform.TELEGRAM,
+      archetype: PostArchetype.SHORT_POST,
       goal: ContentGoal.AWARENESS,
       status: PlanStatus.IDEA
     };
@@ -138,7 +139,7 @@ export const ContentCalendar: React.FC<ContentCalendarProps> = ({
       setSelectedDate(newDate);
   };
 
-  const togglePlatform = (platformName: string) => {
+  const togglePlatform = (platformName: PlatformName) => {
       const current = strategy.platforms;
       let newPlatforms = current.includes(platformName) ? current.filter(p => p !== platformName) : [...current, platformName];
       onUpdateStrategy({ ...strategy, platforms: newPlatforms });

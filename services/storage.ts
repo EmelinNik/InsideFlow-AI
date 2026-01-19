@@ -1,9 +1,27 @@
 
-import { AppState } from '../types';
+import { AppState, AuthorProfile, Project, SubscriptionPlan } from '../types';
+import { supabase } from './supabaseClient';
 
 // Keys for LocalStorage
 const SESSION_KEY = 'scriptflow_session_user_id';
 const DB_PREFIX = 'scriptflow_db_';
+const STORAGE_TABLE = 'app_users';
+const STORAGE_SCHEMA_VERSION = 2;
+
+export interface StoredUserData {
+  schemaVersion?: number;
+  authorProfile?: AuthorProfile | null;
+  subscriptionPlan?: SubscriptionPlan;
+  hasOnboarded?: boolean;
+  hasSeenGuide?: boolean;
+  projects?: Project[];
+  currentProjectId?: string | null;
+  contentPlan?: unknown;
+  languageProfile?: unknown;
+  writingSamples?: unknown;
+  scripts?: unknown;
+  strategy?: unknown;
+}
 
 /**
  * Simulates a Database connection.
@@ -27,24 +45,7 @@ export const clearSession = () => {
 // 2. USER DATA MANAGEMENT
 const getUserKey = (userId: number) => `${DB_PREFIX}${userId}`;
 
-export const saveUserData = (userId: number, data: AppState) => {
-  try {
-    // We save the entire state structure, now including projects
-    const payload = {
-      authorProfile: data.authorProfile,
-      subscriptionPlan: data.subscriptionPlan,
-      hasOnboarded: data.hasOnboarded,
-      hasSeenGuide: data.hasSeenGuide,
-      projects: data.projects,
-      currentProjectId: data.currentProjectId
-    };
-    localStorage.setItem(getUserKey(userId), JSON.stringify(payload));
-  } catch (e) {
-    console.error("Database Save Error:", e);
-  }
-};
-
-export const loadUserData = (userId: number): any | null => {
+const getLocalUserData = (userId: number): StoredUserData | null => {
   try {
     const raw = localStorage.getItem(getUserKey(userId));
     if (!raw) return null;
@@ -55,7 +56,85 @@ export const loadUserData = (userId: number): any | null => {
   }
 };
 
+export const saveUserData = async (userId: number, data: AppState) => {
+  const payload: StoredUserData = {
+    schemaVersion: STORAGE_SCHEMA_VERSION,
+    authorProfile: data.authorProfile,
+    subscriptionPlan: data.subscriptionPlan,
+    hasOnboarded: data.hasOnboarded,
+    hasSeenGuide: data.hasSeenGuide,
+    projects: data.projects,
+    currentProjectId: data.currentProjectId
+  };
+
+  try {
+    if (supabase) {
+      const { error } = await supabase
+        .from(STORAGE_TABLE)
+        .upsert({
+          user_id: userId,
+          data: payload,
+          updated_at: new Date().toISOString()
+        });
+      if (error) {
+        throw error;
+      }
+      return;
+    }
+
+    localStorage.setItem(getUserKey(userId), JSON.stringify(payload));
+  } catch (e) {
+    console.error("Database Save Error:", e);
+    try {
+      localStorage.setItem(getUserKey(userId), JSON.stringify(payload));
+    } catch (storageError) {
+      console.error("LocalStorage Save Error:", storageError);
+    }
+  }
+};
+
+export const loadUserData = async (userId: number): Promise<StoredUserData | null> => {
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from(STORAGE_TABLE)
+        .select('data')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (error) {
+        throw error;
+      }
+
+      if (data?.data) {
+        return data.data as StoredUserData;
+      }
+
+      return getLocalUserData(userId);
+    } catch (e) {
+      console.error("Database Load Error:", e);
+      return getLocalUserData(userId);
+    }
+  }
+
+  return getLocalUserData(userId);
+};
+
 // 3. UTILS
-export const clearUserData = (userId: number) => {
-    localStorage.removeItem(getUserKey(userId));
-}
+export const clearUserData = async (userId: number) => {
+  if (supabase) {
+    try {
+      const { error } = await supabase
+        .from(STORAGE_TABLE)
+        .delete()
+        .eq('user_id', userId);
+      if (error) {
+        throw error;
+      }
+      return;
+    } catch (e) {
+      console.error("Database Clear Error:", e);
+    }
+  }
+  localStorage.removeItem(getUserKey(userId));
+};

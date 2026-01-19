@@ -1,7 +1,9 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { AuthorProfile, LanguageProfile, GeneratedOption, ContentPlanItem, ContentGoal, PlanStatus, MediaSuggestion, StrategyPreset, CalendarAnalysis, ProjectPersona, StrategicAnalysis, PromptKey, PlatformConfig, ArchetypeConfig, ContentStrategy } from "../types";
+import { AuthorProfile, LanguageProfile, GeneratedOption, ContentPlanItem, ContentGoal, PlanStatus, MediaSuggestion, StrategyPreset, CalendarAnalysis, ProjectPersona, StrategicAnalysis, PromptKey, PlatformConfig, ArchetypeConfig, ContentStrategy, TargetPlatform } from "../types";
 import { DEFAULT_PROMPTS } from "../constants";
+import { createId } from "../utils/id";
+import { normalizePlatformName } from "../utils/platforms";
 
 // Corrected initialization with named apiKey parameter
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -185,14 +187,14 @@ export const generateContentPlan = async (
         const rawData = cleanAndParseJSON(response.text);
         if (!Array.isArray(rawData)) throw new Error("AI returned invalid format");
 
-        return rawData.map((item: any, index: number) => ({
-            id: Date.now().toString() + index,
+        return rawData.map((item: any) => ({
+            id: createId(),
             date: item.date,
             time: item.time || "10:00",
             topic: item.topic,
             description: item.description || "",
             rationale: item.rationale,
-            platform: item.platform,
+            platform: normalizePlatformName(item.platform || strategy.platforms[0] || TargetPlatform.TELEGRAM),
             archetype: item.archetype,
             goal: item.goal as ContentGoal,
             status: PlanStatus.IDEA

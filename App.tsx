@@ -98,7 +98,7 @@ function App() {
       const currentUserId = getSessionUserId();
       
       if (currentUserId) {
-        const userData = loadUserData(currentUserId);
+        const userData = await loadUserData(currentUserId);
         
         if (userData) {
           let projects = userData.projects || [];
@@ -172,7 +172,7 @@ function App() {
 
   useEffect(() => {
     if (!loading && state.isAuthenticated && state.authorProfile?.telegramId) {
-       saveUserData(state.authorProfile.telegramId, state);
+       void saveUserData(state.authorProfile.telegramId, state);
     }
   }, [state, loading]);
 
@@ -183,11 +183,11 @@ function App() {
       }
   }, [loading, state.isAuthenticated, state.hasSeenGuide, showOnboarding]);
 
-  const handleTelegramLogin = (user: TelegramUser) => {
+  const handleTelegramLogin = async (user: TelegramUser) => {
      setLoading(true);
      setSessionUserId(user.id);
 
-     const existingData = loadUserData(user.id);
+     const existingData = await loadUserData(user.id);
 
      if (existingData) {
          let projects = existingData.projects || [];

@@ -1,5 +1,6 @@
 
 import { AppState } from '../types';
+import { supabase } from './supabase';
 
 // Keys for LocalStorage
 const SESSION_KEY = 'scriptflow_session_user_id';
@@ -27,7 +28,7 @@ export const clearSession = () => {
 // 2. USER DATA MANAGEMENT
 const getUserKey = (userId: number) => `${DB_PREFIX}${userId}`;
 
-export const saveUserData = (userId: number, data: AppState) => {
+export const saveUserData = async (userId: number, data: AppState) => {
   try {
     // We save the entire state structure, now including projects
     const payload = {
@@ -38,14 +39,40 @@ export const saveUserData = (userId: number, data: AppState) => {
       projects: data.projects,
       currentProjectId: data.currentProjectId
     };
+
+    if (supabase) {
+      const { error } = await supabase
+        .from('user_data')
+        .upsert({ user_id: userId, data: payload }, { onConflict: 'user_id' });
+
+      if (error) {
+        throw error;
+      }
+      return;
+    }
+
     localStorage.setItem(getUserKey(userId), JSON.stringify(payload));
   } catch (e) {
     console.error("Database Save Error:", e);
   }
 };
 
-export const loadUserData = (userId: number): any | null => {
+export const loadUserData = async (userId: number): Promise<any | null> => {
   try {
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('user_data')
+        .select('data')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (error) {
+        throw error;
+      }
+
+      return data?.data ?? null;
+    }
+
     const raw = localStorage.getItem(getUserKey(userId));
     if (!raw) return null;
     return JSON.parse(raw);
@@ -56,6 +83,11 @@ export const loadUserData = (userId: number): any | null => {
 };
 
 // 3. UTILS
-export const clearUserData = (userId: number) => {
-    localStorage.removeItem(getUserKey(userId));
-}
+export const clearUserData = async (userId: number) => {
+  if (supabase) {
+    await supabase.from('user_data').delete().eq('user_id', userId);
+    return;
+  }
+
+  localStorage.removeItem(getUserKey(userId));
+};
